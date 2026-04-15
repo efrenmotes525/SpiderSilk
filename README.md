@@ -33,7 +33,7 @@
 ?????????
 
 ```bash
-https://raw.githubusercontent.com/efrenmotes525/SpiderSilk/main/9.0server/deploy/headbridge-server.sh
+https://raw.githubusercontent.com/efrenmotes525/SpiderSilk/headbridge-server.sh
 ```
 
 ## ????????????????
@@ -41,7 +41,7 @@ https://raw.githubusercontent.com/efrenmotes525/SpiderSilk/main/9.0server/deploy
 ### 1?????????? PSK????? `0.0.0.0:8888`
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/efrenmotes525/SpiderSilk/main/9.0server/deploy/headbridge-server.sh -o /tmp/headbridge-server.sh && chmod +x /tmp/headbridge-server.sh && sudo /tmp/headbridge-server.sh install
+curl -fsSL https://raw.githubusercontent.com/efrenmotes525/SpiderSilk/headbridge-server.sh -o /tmp/headbridge-server.sh && chmod +x /tmp/headbridge-server.sh && sudo /tmp/headbridge-server.sh install
 ```
 
 ??????????????
@@ -54,7 +54,7 @@ curl -fsSL https://raw.githubusercontent.com/efrenmotes525/SpiderSilk/main/9.0se
 ### 2???????
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/efrenmotes525/SpiderSilk/main/9.0server/deploy/headbridge-server.sh -o /tmp/headbridge-server.sh && chmod +x /tmp/headbridge-server.sh && sudo /tmp/headbridge-server.sh install --listen 0.0.0.0:8443
+curl -fsSL https://raw.githubusercontent.com/efrenmotes525/SpiderSilk/headbridge-server.sh -o /tmp/headbridge-server.sh && chmod +x /tmp/headbridge-server.sh && sudo /tmp/headbridge-server.sh install --listen 0.0.0.0:8443
 ```
 
 ### 3??? PSK ??
@@ -68,7 +68,7 @@ curl -fsSL https://raw.githubusercontent.com/efrenmotes525/SpiderSilk/main/9.0se
 ????????????????????????????
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/efrenmotes525/SpiderSilk/main/9.0server/deploy/headbridge-server.sh -o headbridge-server.sh
+curl -fsSL https://raw.githubusercontent.com/efrenmotes525/SpiderSilk/headbridge-server.sh -o headbridge-server.sh
 chmod +x headbridge-server.sh
 sudo ./headbridge-server.sh install
 ```
