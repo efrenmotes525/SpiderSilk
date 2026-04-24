@@ -46,7 +46,7 @@
 > 客户端导入链接仍然使用主端口 `8443`；魅影回程端口是 `8444`，需要在云厂商安全组里同时放行 `8443/tcp` 和 `8444/tcp`。
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/efrenmotes525/SpiderSilk/main/topflow-server.sh | sed 's/\r$//' > /tmp/topflow-server.sh && chmod +x /tmp/topflow-server.sh && TOPFLOW_EXTRA_ARGS='--vvip-relay-listen 0.0.0.0:8444' /tmp/topflow-server.sh install --listen 0.0.0.0:8443 --public-endpoint your.domain.com:8443 && (command -v ufw >/dev/null 2>&1 && ufw allow 8444/tcp || true) && (command -v firewall-cmd >/dev/null 2>&1 && systemctl is-active --quiet firewalld && firewall-cmd --permanent --add-port=8444/tcp && firewall-cmd --reload || true) && (ss -ltnp | grep -E ':(8443|8444)\b' || true)
+curl -fsSL "https://raw.githubusercontent.com/efrenmotes525/SpiderSilk/main/topflow-server.sh?$(date +%s)" | sed 's/\r$//' > /tmp/topflow-server.sh && chmod +x /tmp/topflow-server.sh && /tmp/topflow-server.sh install --listen 0.0.0.0:8443 --vvip-relay-listen 0.0.0.0:8444 --public-endpoint your.domain.com:8443 --node-name "TopFlow-8443" --group-name "AutoDeploy"
 ```
 
 ### 一键开启魅影：443 主端口 + 444 回程端口
@@ -54,7 +54,7 @@ curl -fsSL https://raw.githubusercontent.com/efrenmotes525/SpiderSilk/main/topfl
 > 如果你想伪装成常见 HTTPS 端口，用这个。需要在云厂商安全组里同时放行 `443/tcp` 和 `444/tcp`。
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/efrenmotes525/SpiderSilk/main/topflow-server.sh | sed 's/\r$//' > /tmp/topflow-server.sh && chmod +x /tmp/topflow-server.sh && TOPFLOW_EXTRA_ARGS='--vvip-relay-listen 0.0.0.0:444' /tmp/topflow-server.sh install --listen 0.0.0.0:443 --public-endpoint your.domain.com:443 && (command -v ufw >/dev/null 2>&1 && ufw allow 444/tcp || true) && (command -v firewall-cmd >/dev/null 2>&1 && systemctl is-active --quiet firewalld && firewall-cmd --permanent --add-port=444/tcp && firewall-cmd --reload || true) && (ss -ltnp | grep -E ':(443|444)\b' || true)
+curl -fsSL "https://raw.githubusercontent.com/efrenmotes525/SpiderSilk/main/topflow-server.sh?$(date +%s)" | sed 's/\r$//' > /tmp/topflow-server.sh && chmod +x /tmp/topflow-server.sh && /tmp/topflow-server.sh install --listen 0.0.0.0:443 --vvip-relay-listen 0.0.0.0:444 --public-endpoint your.domain.com:443 --node-name "TopFlow-443" --group-name "AutoDeploy"
 ```
 
 ### 一键开启魅影：27017 主端口 + 27018 回程端口
@@ -62,7 +62,7 @@ curl -fsSL https://raw.githubusercontent.com/efrenmotes525/SpiderSilk/main/topfl
 > 如果你想用非常规端口，可以用这一组。需要在云厂商安全组里同时放行 `27017/tcp` 和 `27018/tcp`。
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/efrenmotes525/SpiderSilk/main/topflow-server.sh | sed 's/\r$//' > /tmp/topflow-server.sh && chmod +x /tmp/topflow-server.sh && TOPFLOW_EXTRA_ARGS='--vvip-relay-listen 0.0.0.0:27018' /tmp/topflow-server.sh install --listen 0.0.0.0:27017 --public-endpoint your.domain.com:27017 && (command -v ufw >/dev/null 2>&1 && ufw allow 27018/tcp || true) && (command -v firewall-cmd >/dev/null 2>&1 && systemctl is-active --quiet firewalld && firewall-cmd --permanent --add-port=27018/tcp && firewall-cmd --reload || true) && (ss -ltnp | grep -E ':(27017|27018)\b' || true)
+curl -fsSL "https://raw.githubusercontent.com/efrenmotes525/SpiderSilk/main/topflow-server.sh?$(date +%s)" | sed 's/\r$//' > /tmp/topflow-server.sh && chmod +x /tmp/topflow-server.sh && /tmp/topflow-server.sh install --listen 0.0.0.0:27017 --vvip-relay-listen 0.0.0.0:27018 --public-endpoint your.domain.com:27017 --node-name "TopFlow-27017" --group-name "AutoDeploy"
 ```
 ### 推荐：8443
 
@@ -177,6 +177,7 @@ curl -fsSL https://raw.githubusercontent.com/efrenmotes525/SpiderSilk/main/topfl
 | `--node-name <name>` | 导入到客户端后的节点名称，默认 `TopFlow`。 |
 | `--group-name <name>` | 导入到客户端后的分组名称，默认 `AutoDeploy`。 |
 | `--sni <host>` | 客户端配置中的 SNI，默认 `www.cloudflare.com`。 |
+| `--vvip-relay-listen <host:port\|auto\|off>` | Enable VVIP/phantom return relay; use main port +1, e.g. `443 -> 444`. |
 | `--max-connections <num>` | 最大连接数，默认 `10000`。 |
 | `--download-url <url>` | 自定义服务端二进制下载地址。 |
 | `--ca-cert <path>` / `--ca-key <path>` | 指定 CA 证书和私钥路径。 |
@@ -200,60 +201,37 @@ TOPFLOW_SNI="www.cloudflare.com" \
 /tmp/topflow-server.sh install --listen 0.0.0.0:8443 --public-endpoint your.domain.com:8443
 ```
 
-## VVIP 魅影 / 回程中继
+## VVIP / Phantom return relay
 
-`headbridge-server` 支持 VVIP 回程中继监听。`topflow-server.sh` 当前没有独立的 `--vvip-relay-listen` 命令行参数，但可以通过 `TOPFLOW_EXTRA_ARGS` 透传给服务端。
+`topflow-server.sh` now supports `--vvip-relay-listen` directly. The installer prints the client config, `topflow://` import link, terminal QR code, PSK, and relay listener.
 
-### TopFlow 脚本启用 VVIP
-
-以主端口 `8443`、回程端口 `8444` 为例：
+### One-line install: 443 + 444
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/efrenmotes525/SpiderSilk/main/topflow-server.sh | sed 's/\r$//' > /tmp/topflow-server.sh
-chmod +x /tmp/topflow-server.sh
-TOPFLOW_EXTRA_ARGS='--vvip-relay-listen 0.0.0.0:8444' \
-/tmp/topflow-server.sh install \
-  --listen 0.0.0.0:8443 \
-  --public-endpoint your.domain.com:8443
+curl -fsSL "https://raw.githubusercontent.com/efrenmotes525/SpiderSilk/main/topflow-server.sh?$(date +%s)" | sed 's/\r$//' > /tmp/topflow-server.sh && chmod +x /tmp/topflow-server.sh && /tmp/topflow-server.sh install --listen 0.0.0.0:443 --vvip-relay-listen 0.0.0.0:444 --public-endpoint your.domain.com:443 --node-name "TopFlow-443" --group-name "AutoDeploy"
 ```
 
-然后手动放行回程端口：
+### One-line install: 8443 + 8444
 
 ```bash
-# UFW
-ufw allow 8444/tcp
-
-# firewalld
-firewall-cmd --permanent --add-port=8444/tcp && firewall-cmd --reload
+curl -fsSL "https://raw.githubusercontent.com/efrenmotes525/SpiderSilk/main/topflow-server.sh?$(date +%s)" | sed 's/\r$//' > /tmp/topflow-server.sh && chmod +x /tmp/topflow-server.sh && /tmp/topflow-server.sh install --listen 0.0.0.0:8443 --vvip-relay-listen 0.0.0.0:8444 --public-endpoint your.domain.com:8443 --node-name "TopFlow-8443" --group-name "AutoDeploy"
 ```
 
-检查主端口和回程端口：
+Check listening ports:
 
 ```bash
-ss -ltnp | grep -E ':(8443|8444)\b'
+ss -ltnp | grep -E ':(443|444|8443|8444|27017|27018)\b'
 ```
 
-常见端口对应：
+Common mapping:
 
-| 主端口 | VVIP 回程端口 |
+| Main port | VVIP/phantom relay port |
 | --- | --- |
 | `443` | `444` |
 | `8443` | `8444` |
 | `27017` | `27018` |
 
-> 注意：如果使用 `TOPFLOW_EXTRA_ARGS` 开 VVIP，TopFlow 安装脚本只会自动放行主端口，回程端口需要你手动放行云厂商安全组和系统防火墙。
-
-### HeadBridge 原生脚本启用 VVIP
-
-如果不需要 TopFlow 导入链接 / 二维码，也可以直接使用原生脚本：
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/efrenmotes525/SpiderSilk/main/headbridge-server.sh | sed 's/\r$//' > /tmp/headbridge-server.sh
-chmod +x /tmp/headbridge-server.sh
-/tmp/headbridge-server.sh install --listen 0.0.0.0:8443 --vvip-relay-listen auto
-```
-
-`auto` 会使用主端口 `+1` 作为回程端口，例如 `8443 -> 8444`、`443 -> 444`。
+Cloud security group must allow both the main port and the relay port.
 
 ## 故障排查
 
