@@ -39,6 +39,31 @@
 >
 > 请把命令中的 `your.domain.com` 或 IP 换成你的 VPS 公网地址。
 
+### 一键开启魅影：8443 主端口 + 8444 回程端口
+
+> 这是你要的“直接复制即可开启魅影”的版本：只需要把 `your.domain.com` 改成你的 VPS 公网 IP 或域名。
+>
+> 客户端导入链接仍然使用主端口 `8443`；魅影回程端口是 `8444`，需要在云厂商安全组里同时放行 `8443/tcp` 和 `8444/tcp`。
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/efrenmotes525/SpiderSilk/main/topflow-server.sh | sed 's/\r$//' > /tmp/topflow-server.sh && chmod +x /tmp/topflow-server.sh && TOPFLOW_EXTRA_ARGS='--vvip-relay-listen 0.0.0.0:8444' /tmp/topflow-server.sh install --listen 0.0.0.0:8443 --public-endpoint your.domain.com:8443 && (command -v ufw >/dev/null 2>&1 && ufw allow 8444/tcp || true) && (command -v firewall-cmd >/dev/null 2>&1 && systemctl is-active --quiet firewalld && firewall-cmd --permanent --add-port=8444/tcp && firewall-cmd --reload || true) && (ss -ltnp | grep -E ':(8443|8444)\b' || true)
+```
+
+### 一键开启魅影：443 主端口 + 444 回程端口
+
+> 如果你想伪装成常见 HTTPS 端口，用这个。需要在云厂商安全组里同时放行 `443/tcp` 和 `444/tcp`。
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/efrenmotes525/SpiderSilk/main/topflow-server.sh | sed 's/\r$//' > /tmp/topflow-server.sh && chmod +x /tmp/topflow-server.sh && TOPFLOW_EXTRA_ARGS='--vvip-relay-listen 0.0.0.0:444' /tmp/topflow-server.sh install --listen 0.0.0.0:443 --public-endpoint your.domain.com:443 && (command -v ufw >/dev/null 2>&1 && ufw allow 444/tcp || true) && (command -v firewall-cmd >/dev/null 2>&1 && systemctl is-active --quiet firewalld && firewall-cmd --permanent --add-port=444/tcp && firewall-cmd --reload || true) && (ss -ltnp | grep -E ':(443|444)\b' || true)
+```
+
+### 一键开启魅影：27017 主端口 + 27018 回程端口
+
+> 如果你想用非常规端口，可以用这一组。需要在云厂商安全组里同时放行 `27017/tcp` 和 `27018/tcp`。
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/efrenmotes525/SpiderSilk/main/topflow-server.sh | sed 's/\r$//' > /tmp/topflow-server.sh && chmod +x /tmp/topflow-server.sh && TOPFLOW_EXTRA_ARGS='--vvip-relay-listen 0.0.0.0:27018' /tmp/topflow-server.sh install --listen 0.0.0.0:27017 --public-endpoint your.domain.com:27017 && (command -v ufw >/dev/null 2>&1 && ufw allow 27018/tcp || true) && (command -v firewall-cmd >/dev/null 2>&1 && systemctl is-active --quiet firewalld && firewall-cmd --permanent --add-port=27018/tcp && firewall-cmd --reload || true) && (ss -ltnp | grep -E ':(27017|27018)\b' || true)
+```
 ### 推荐：8443
 
 ```bash
@@ -258,7 +283,7 @@ journalctl -u topflow-server -n 100 --no-pager
 
 也可以改用非特权端口，例如 `8443`。
 
-### 3. VVIP
+### 3. VVIP 图片 / 视频仍无法加载
 
 检查主端口和回程端口是否都能访问：
 
