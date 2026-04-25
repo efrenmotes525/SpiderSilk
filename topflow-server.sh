@@ -22,6 +22,7 @@ TOPFLOW_SNI="${TOPFLOW_SNI:-www.cloudflare.com}"
 TOPFLOW_VVIP_RELAY_LISTEN="${TOPFLOW_VVIP_RELAY_LISTEN:-off}"
 TOPFLOW_PSK="${TOPFLOW_PSK:-}"
 TOPFLOW_MAX_CONNECTIONS="${TOPFLOW_MAX_CONNECTIONS:-10000}"
+TOPFLOW_MAX_CONNECTIONS_PER_IP="${TOPFLOW_MAX_CONNECTIONS_PER_IP:-256}"
 TOPFLOW_SKIP_CERT_VERIFY="${TOPFLOW_SKIP_CERT_VERIFY:-true}"
 TOPFLOW_DEBUG="${TOPFLOW_DEBUG:-false}"
 TOPFLOW_CA_CERT="${TOPFLOW_CA_CERT:-}"
@@ -198,6 +199,8 @@ TopFlow 服务端统一管理脚本
   --vvip-relay-listen <host:port|auto|off>
                             VVIP/phantom return relay listener; auto means main port +1; default off
   --max-connections <num>     最大连接数，默认 10000
+  --max-connections-per-ip <num>
+                            单 IP 最大并发连接数，默认 256，用于防止 VVIP/Telegram 建连风暴压垮服务端
   --download-url <url>        服务端二进制下载地址
   --ca-cert <path>            可选，指定 CA 证书路径
   --ca-key <path>             可选，指定 CA 私钥路径
@@ -238,6 +241,7 @@ parse_install_args() {
       --sni) TOPFLOW_SNI="$2"; shift 2 ;;
       --vvip-relay-listen) TOPFLOW_VVIP_RELAY_LISTEN="$2"; shift 2 ;;
       --max-connections) TOPFLOW_MAX_CONNECTIONS="$2"; shift 2 ;;
+      --max-connections-per-ip) TOPFLOW_MAX_CONNECTIONS_PER_IP="$2"; shift 2 ;;
       --download-url) TOPFLOW_DOWNLOAD_URL="$2"; shift 2 ;;
       --ca-cert) TOPFLOW_CA_CERT="$2"; shift 2 ;;
       --ca-key) TOPFLOW_CA_KEY="$2"; shift 2 ;;
@@ -399,6 +403,7 @@ TOPFLOW_SNI='$(escape_single_quotes "$TOPFLOW_SNI")'
 TOPFLOW_VVIP_RELAY_LISTEN='$(escape_single_quotes "$TOPFLOW_VVIP_RELAY_LISTEN")'
 TOPFLOW_PSK='$(escape_single_quotes "$TOPFLOW_PSK")'
 TOPFLOW_MAX_CONNECTIONS='$(escape_single_quotes "$TOPFLOW_MAX_CONNECTIONS")'
+TOPFLOW_MAX_CONNECTIONS_PER_IP='$(escape_single_quotes "$TOPFLOW_MAX_CONNECTIONS_PER_IP")'
 TOPFLOW_SKIP_CERT_VERIFY='$(escape_single_quotes "$TOPFLOW_SKIP_CERT_VERIFY")'
 TOPFLOW_DEBUG='$(escape_single_quotes "$TOPFLOW_DEBUG")'
 TOPFLOW_CA_CERT='$(escape_single_quotes "$TOPFLOW_CA_CERT")'
@@ -428,7 +433,11 @@ fi
 # shellcheck disable=SC1090
 source "\$ENV_FILE"
 
-args=(--listen "\${TOPFLOW_LISTEN:-0.0.0.0:8888}" --max-connections "\${TOPFLOW_MAX_CONNECTIONS:-10000}")
+args=(
+  --listen "\${TOPFLOW_LISTEN:-0.0.0.0:8888}"
+  --max-connections "\${TOPFLOW_MAX_CONNECTIONS:-10000}"
+  --max-connections-per-ip "\${TOPFLOW_MAX_CONNECTIONS_PER_IP:-256}"
+)
 
 VVIP_RELAY_LISTEN="\${TOPFLOW_VVIP_RELAY_LISTEN:-off}"
 if [[ -n "\$VVIP_RELAY_LISTEN" && ! "\$VVIP_RELAY_LISTEN" =~ ^(0|false|FALSE|no|NO|off|OFF)$ ]]; then
@@ -487,6 +496,7 @@ write_systemd_unit() {
 Description=TopFlow HeadBridge Server
 After=network-online.target
 Wants=network-online.target
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
@@ -495,8 +505,9 @@ Group=$TOPFLOW_GROUP
 WorkingDirectory=$INSTALL_DIR
 ExecStart=$RUNNER_PATH
 Restart=always
-RestartSec=2
+RestartSec=1
 LimitNOFILE=1048576
+TasksMax=16384
 NoNewPrivileges=true
 ${extra_caps}
 
