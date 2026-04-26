@@ -51,6 +51,22 @@ curl -fsSL https://raw.githubusercontent.com/efrenmotes525/SpiderSilk/main/topfl
 curl -fsSL https://raw.githubusercontent.com/efrenmotes525/SpiderSilk/main/topflow-server.sh | sed 's/\r$//' > /tmp/topflow-server.sh && chmod +x /tmp/topflow-server.sh && /tmp/topflow-server.sh install --listen auto:443
 ```
 
+### 自动检测双栈 + 默认开启 VVIP 魅影：默认 8888 + 8889 回程
+
+> 自动检测 IPv4/IPv6/双栈；双栈主机会监听 `[::]:8888`，导入链接里同时生成 IPv4 与 IPv6 节点，并默认开启 VVIP 魅影。需要在系统防火墙/云安全组放行 `8888/tcp` 和 `8889/tcp`。
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/efrenmotes525/SpiderSilk/main/topflow-server.sh | sed 's/\r$//' > /tmp/topflow-server.sh && chmod +x /tmp/topflow-server.sh && /tmp/topflow-server.sh install --vvip-relay-listen auto
+```
+
+### 自动检测双栈 + 默认开启 VVIP 魅影：443 + 444 回程
+
+> 适合直接使用 HTTPS 常见端口。需要放行 `443/tcp` 和 `444/tcp`。
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/efrenmotes525/SpiderSilk/main/topflow-server.sh | sed 's/\r$//' > /tmp/topflow-server.sh && chmod +x /tmp/topflow-server.sh && /tmp/topflow-server.sh install --listen auto:443 --vvip-relay-listen auto
+```
+
 ### 一键开启魅影：8443 主端口 + 8444 回程端口
 
 > 这是你要的“直接复制即可开启魅影”的版本：只需要把 `your.domain.com` 改成你的 VPS 公网 IP 或域名。
@@ -118,6 +134,8 @@ chmod +x /tmp/topflow-server.sh
   port        = 8443
   sni         = www.cloudflare.com
   insecureTls = true
+  vvipEnabled = false
+  vvipRelay   = off
   pskB64      = <自动生成或手动指定的 PSK>
   kernelType  = HeadBridge
 
