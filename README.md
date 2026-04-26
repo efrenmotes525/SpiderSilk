@@ -18,7 +18,7 @@
 - 默认从本仓库下载 `headbridge-server`。
 - 自动生成 32 字节 Base64 PSK；也支持手动指定。
 - 自动输出客户端字段、`topflow://` 导入链接和终端二维码。
-- 支持 IPv4 / IPv6 公网地址。
+- 默认自动检测 IPv4 / IPv6 / 双栈；双栈 VPS 会自动导出 IPv4 与 IPv6 两个客户端节点。
 - 支持 `install` / `update` / `uninstall`。
 - 监听 `80` / `443` 等低端口时自动授予 `cap_net_bind_service`。
 - 支持 UFW / firewalld 自动放行主端口。
@@ -37,7 +37,19 @@
 
 > 如果已经是 root，不要再套 `sudo`。
 >
-> 请把命令中的 `your.domain.com` 或 IP 换成你的 VPS 公网地址。
+> 不传 `--listen` / `--public-endpoint` 时，脚本会自动检测公网 IPv4/IPv6。双栈主机会监听 `[::]:8888` 并在导入链接里同时写入 IPv4 与 IPv6 节点。
+
+### 自动检测双栈：默认 8888
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/efrenmotes525/SpiderSilk/main/topflow-server.sh | sed 's/\r$//' > /tmp/topflow-server.sh && chmod +x /tmp/topflow-server.sh && /tmp/topflow-server.sh install
+```
+
+### 自动检测双栈：指定 443
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/efrenmotes525/SpiderSilk/main/topflow-server.sh | sed 's/\r$//' > /tmp/topflow-server.sh && chmod +x /tmp/topflow-server.sh && /tmp/topflow-server.sh install --listen auto:443
+```
 
 ### 一键开启魅影：8443 主端口 + 8444 回程端口
 
@@ -76,7 +88,7 @@ curl -fsSL https://raw.githubusercontent.com/efrenmotes525/SpiderSilk/main/topfl
 curl -fsSL https://raw.githubusercontent.com/efrenmotes525/SpiderSilk/main/topflow-server.sh | sed 's/\r$//' > /tmp/topflow-server.sh && chmod +x /tmp/topflow-server.sh && /tmp/topflow-server.sh install --listen 0.0.0.0:443 --public-endpoint your.domain.com:443
 ```
 
-### IPv6
+### 手动指定 IPv6
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/efrenmotes525/SpiderSilk/main/topflow-server.sh | sed 's/\r$//' > /tmp/topflow-server.sh && chmod +x /tmp/topflow-server.sh && /tmp/topflow-server.sh install --listen [::]:443 --public-endpoint [2001:db8::1]:443
@@ -171,8 +183,8 @@ curl -fsSL https://raw.githubusercontent.com/efrenmotes525/SpiderSilk/main/topfl
 
 | 参数 | 说明 |
 | --- | --- |
-| `--listen <host:port>` | 服务监听地址，默认 `0.0.0.0:8888`。IPv6 建议写成 `[::]:443`。 |
-| `--public-endpoint <host:port>` | 写入客户端配置的公网地址。监听 `0.0.0.0` / `[::]` 时建议显式指定。 |
+| `--listen <host:port\|auto[:port]>` | 服务监听地址，默认 `auto:8888`。脚本自动检测网络栈：双栈/IPv6-only 用 `[::]:port`，IPv4-only 用 `0.0.0.0:port`。 |
+| `--public-endpoint <host:port[,host:port]>` | 写入客户端配置的公网地址。不传时自动探测；双栈会生成 IPv4 与 IPv6 两个节点。 |
 | `--psk <Base64>` | 32 字节 PSK 的 Base64 字符串；不传则自动生成。 |
 | `--node-name <name>` | 导入到客户端后的节点名称，默认 `TopFlow`。 |
 | `--group-name <name>` | 导入到客户端后的分组名称，默认 `AutoDeploy`。 |
