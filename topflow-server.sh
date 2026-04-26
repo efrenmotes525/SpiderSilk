@@ -7,6 +7,7 @@ DEFAULT_SERVICE_NAME="topflow-server"
 DEFAULT_INSTALL_DIR="/opt/topflow-server"
 DEFAULT_ETC_DIR="/etc/topflow-server"
 DEFAULT_DOWNLOAD_URL="https://raw.githubusercontent.com/efrenmotes525/SpiderSilk/main/headbridge-server"
+DEFAULT_LISTEN_PORT="8888"
 
 SERVICE_NAME="${TOPFLOW_SERVICE_NAME:-topflow-server}"
 INSTALL_DIR="${TOPFLOW_INSTALL_DIR:-$DEFAULT_INSTALL_DIR}"
@@ -14,7 +15,7 @@ ETC_DIR="${TOPFLOW_ETC_DIR:-$DEFAULT_ETC_DIR}"
 TOPFLOW_USER="${TOPFLOW_USER:-topflow}"
 TOPFLOW_GROUP="${TOPFLOW_GROUP:-topflow}"
 
-TOPFLOW_LISTEN="${TOPFLOW_LISTEN:-0.0.0.0:8888}"
+TOPFLOW_LISTEN="${TOPFLOW_LISTEN:-auto}"
 TOPFLOW_PUBLIC_ENDPOINT="${TOPFLOW_PUBLIC_ENDPOINT:-}"
 TOPFLOW_NODE_NAME="${TOPFLOW_NODE_NAME:-TopFlow}"
 TOPFLOW_GROUP_NAME="${TOPFLOW_GROUP_NAME:-AutoDeploy}"
@@ -118,6 +119,85 @@ is_wildcard_host() {
   [[ "$host" == "0.0.0.0" || "$host" == "::" ]]
 }
 
+trim_value() {
+  local value="${1:-}"
+  value="${value#"${value%%[![:space:]]*}"}"
+  value="${value%"${value##*[![:space:]]}"}"
+  printf '%s' "$value"
+}
+
+is_auto_listen() {
+  case "$(lower "${1:-}")" in
+    auto|auto:*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+auto_listen_port() {
+  local value="${1:-auto}" port
+  value="$(lower "$value")"
+  if [[ "$value" == auto:* ]]; then
+    port="${value#auto:}"
+  else
+    port="$DEFAULT_LISTEN_PORT"
+  fi
+  [[ "$port" =~ ^[0-9]+$ && "$port" -ge 1 && "$port" -le 65535 ]] || die "auto 监听端口不合法：$port"
+  printf '%s' "$port"
+}
+
+detect_public_ipv4() {
+  local ip
+  ip="$(curl -4fsSL --max-time 5 https://api.ipify.org 2>/dev/null | tr -d '\r\n' || true)"
+  if [[ -z "$ip" ]]; then
+    ip="$(curl -4fsSL --max-time 5 https://ipv4.icanhazip.com 2>/dev/null | tr -d '\r\n' || true)"
+  fi
+  printf '%s' "$ip"
+}
+
+detect_public_ipv6() {
+  local ip
+  ip="$(curl -6fsSL --max-time 5 https://api64.ipify.org 2>/dev/null | tr -d '\r\n' || true)"
+  if [[ -z "$ip" ]]; then
+    ip="$(curl -6fsSL --max-time 5 https://ipv6.icanhazip.com 2>/dev/null | tr -d '\r\n' || true)"
+  fi
+  printf '%s' "$ip"
+}
+
+describe_ip_stack() {
+  local ipv4="$1" ipv6="$2"
+  if [[ -n "$ipv4" && -n "$ipv6" ]]; then
+    printf 'dual-stack'
+  elif [[ -n "$ipv6" ]]; then
+    printf 'ipv6-only'
+  elif [[ -n "$ipv4" ]]; then
+    printf 'ipv4-only'
+  else
+    printf 'unknown'
+  fi
+}
+
+resolve_auto_network_config() {
+  is_auto_listen "$TOPFLOW_LISTEN" || return 0
+
+  local port public_ipv4 public_ipv6 stack
+  port="$(auto_listen_port "$TOPFLOW_LISTEN")"
+  log "自动检测 VPS 公网 IPv4/IPv6..."
+  public_ipv4="$(detect_public_ipv4)"
+  public_ipv6="$(detect_public_ipv6)"
+  stack="$(describe_ip_stack "$public_ipv4" "$public_ipv6")"
+
+  case "$stack" in
+    dual-stack|ipv6-only)
+      TOPFLOW_LISTEN="$(format_endpoint "::" "$port")"
+      ;;
+    ipv4-only|unknown)
+      TOPFLOW_LISTEN="$(format_endpoint "0.0.0.0" "$port")"
+      ;;
+  esac
+
+  log "网络栈检测结果：$stack；监听地址自动设置为 $TOPFLOW_LISTEN"
+}
+
 resolve_vvip_relay_listen() {
   local listen_value="$1"
   local relay_value="${2:-off}"
@@ -191,8 +271,10 @@ TopFlow 服务端统一管理脚本
 
 安装参数：
   --psk <Base64>              指定 32 字节 PSK 的 Base64 字符串；不传则自动生成
-  --listen <host:port>        监听地址，默认 0.0.0.0:8888；IPv6 建议写成 [::]:8888
-  --public-endpoint <h:p>     给客户端展示的公网地址，例如 1.2.3.4:8443 / [2001:db8::1]:8443
+  --listen <host:port|auto[:port]>
+                            监听地址，默认 auto:8888；脚本自动检测 IPv4/IPv6，双栈或 IPv6 主机监听 [::]:port，IPv4-only 主机监听 0.0.0.0:port
+  --public-endpoint <h:p[,h:p]>
+                            给客户端展示的公网地址；不传时自动探测，双栈会导出 IPv4 与 IPv6 两个节点
   --node-name <name>          客户端节点名称，默认 TopFlow
   --group-name <name>         客户端分组名称，默认 AutoDeploy
   --sni <host>                客户端配置中的 SNI，默认 www.cloudflare.com
@@ -596,53 +678,65 @@ check_current_install() {
   systemctl cat "$SERVICE_NAME" >/dev/null 2>&1 || die "未找到 systemd 服务：$SERVICE_NAME"
 }
 
-detect_public_endpoint() {
-  local listen_host listen_port public_host
+normalize_public_endpoints() {
+  local value="${1:-}" default_port="${2:-}" item
+  value="${value//;/,}"
+  IFS=',' read -r -a endpoint_items <<< "$value"
+  for item in "${endpoint_items[@]}"; do
+    item="$(trim_value "$item")"
+    [[ -n "$item" ]] || continue
+    parse_host_port "$item" "$default_port"
+    printf '%s\n' "$(format_endpoint "$PARSED_HOST" "$PARSED_PORT")"
+  done
+}
+
+detect_public_endpoints() {
+  local listen_host listen_port public_v4 public_v6 emitted
   parse_host_port "$TOPFLOW_LISTEN"
   listen_host="$PARSED_HOST"
   listen_port="$PARSED_PORT"
 
   if [[ -n "${TOPFLOW_PUBLIC_ENDPOINT:-}" ]]; then
-    parse_host_port "$TOPFLOW_PUBLIC_ENDPOINT" "$listen_port"
-    printf '%s' "$(format_endpoint "$PARSED_HOST" "$PARSED_PORT")"
+    normalize_public_endpoints "$TOPFLOW_PUBLIC_ENDPOINT" "$listen_port"
     return 0
   fi
 
   if ! is_wildcard_host "$listen_host"; then
-    printf '%s' "$(format_endpoint "$listen_host" "$listen_port")"
+    printf '%s\n' "$(format_endpoint "$listen_host" "$listen_port")"
     return 0
   fi
 
+  emitted="false"
   if [[ "$listen_host" == "::" ]]; then
-    public_host="$(curl -6fsSL --max-time 5 https://api64.ipify.org 2>/dev/null || true)"
-    if [[ -z "$public_host" ]]; then
-      public_host="$(curl -6fsSL --max-time 5 https://ipv6.icanhazip.com 2>/dev/null | tr -d '\r\n' || true)"
+    public_v4="$(detect_public_ipv4)"
+    public_v6="$(detect_public_ipv6)"
+    if [[ -n "$public_v4" ]]; then
+      printf '%s\n' "$(format_endpoint "$public_v4" "$listen_port")"
+      emitted="true"
     fi
-    if [[ -n "$public_host" ]]; then
-      printf '%s' "$(format_endpoint "$public_host" "$listen_port")"
+    if [[ -n "$public_v6" ]]; then
+      printf '%s\n' "$(format_endpoint "$public_v6" "$listen_port")"
+      emitted="true"
+    fi
+    is_true "$emitted" && return 0
+  else
+    public_v4="$(detect_public_ipv4)"
+    if [[ -n "$public_v4" ]]; then
+      printf '%s\n' "$(format_endpoint "$public_v4" "$listen_port")"
       return 0
     fi
   fi
 
-  public_host="$(curl -4fsSL --max-time 5 https://api.ipify.org 2>/dev/null || true)"
-  if [[ -z "$public_host" ]]; then
-    public_host="$(curl -4fsSL --max-time 5 https://ipv4.icanhazip.com 2>/dev/null | tr -d '\r\n' || true)"
-  fi
+  printf '%s\n' "$(format_endpoint "REPLACE_WITH_PUBLIC_HOST" "$listen_port")"
+}
 
-  if [[ -n "$public_host" ]]; then
-    printf '%s' "$(format_endpoint "$public_host" "$listen_port")"
-    return 0
-  fi
-
-  printf '%s' "$(format_endpoint "REPLACE_WITH_PUBLIC_HOST" "$listen_port")"
+detect_public_endpoint() {
+  detect_public_endpoints | sed -n '1p'
 }
 
 build_topflow_share_json() {
-  local endpoint="$1"
-  local host port insecure_tls
-  parse_host_port "$endpoint"
-  host="$PARSED_HOST"
-  port="$PARSED_PORT"
+  local endpoints="$1"
+  local insecure_tls
 
   if is_true "$TOPFLOW_SKIP_CERT_VERIFY"; then
     insecure_tls="true"
@@ -650,8 +744,7 @@ build_topflow_share_json() {
     insecure_tls="false"
   fi
 
-  TOPFLOW_SHARE_HOST="$host" \
-  TOPFLOW_SHARE_PORT="$port" \
+  TOPFLOW_SHARE_ENDPOINTS="$endpoints" \
   TOPFLOW_SHARE_NODE_NAME="$TOPFLOW_NODE_NAME" \
   TOPFLOW_SHARE_GROUP_NAME="$TOPFLOW_GROUP_NAME" \
   TOPFLOW_SHARE_SNI="$TOPFLOW_SNI" \
@@ -662,32 +755,58 @@ import json
 import os
 import uuid
 
-host = os.environ["TOPFLOW_SHARE_HOST"]
-port = int(os.environ["TOPFLOW_SHARE_PORT"])
+endpoints = [line.strip() for line in os.environ["TOPFLOW_SHARE_ENDPOINTS"].splitlines() if line.strip()]
 node_name = os.environ["TOPFLOW_SHARE_NODE_NAME"]
 group_name = os.environ["TOPFLOW_SHARE_GROUP_NAME"]
 sni = os.environ["TOPFLOW_SHARE_SNI"]
 psk = os.environ["TOPFLOW_SHARE_PSK"]
 insecure_tls = os.environ["TOPFLOW_SHARE_INSECURE_TLS"].lower() == "true"
 
+def parse_endpoint(endpoint):
+    if endpoint.startswith("["):
+        end = endpoint.find("]")
+        if end <= 0:
+            raise ValueError(f"invalid IPv6 endpoint: {endpoint}")
+        host = endpoint[1:end]
+        rest = endpoint[end + 1:]
+        port = int(rest[1:]) if rest.startswith(":") else 0
+        return host, port
+    host, sep, port_text = endpoint.rpartition(":")
+    if not sep:
+        raise ValueError(f"endpoint missing port: {endpoint}")
+    return host, int(port_text)
+
+def endpoint_family(host):
+    if ":" in host:
+        return "IPv6"
+    parts = host.split(".")
+    if len(parts) == 4 and all(part.isdigit() and 0 <= int(part) <= 255 for part in parts):
+        return "IPv4"
+    return "域名"
+
+nodes = []
+for endpoint in endpoints:
+    host, port = parse_endpoint(endpoint)
+    family = endpoint_family(host)
+    display_name = node_name if len(endpoints) == 1 else f"{node_name} {family}"
+    nodes.append({
+        "id": str(uuid.uuid4()),
+        "name": display_name,
+        "host": host,
+        "group": group_name,
+        "port": port,
+        "sni": sni,
+        "insecureTls": insecure_tls,
+        "pskB64": psk,
+        "kernelType": "HeadBridge"
+    })
+
 share = {
     "app": "TopFlow",
     "format": "topflow-share",
     "formatVersion": 1,
     "activeIndex": 0,
-    "nodes": [
-        {
-            "id": uuid.uuid4().hex,
-            "name": node_name,
-            "host": host,
-            "group": group_name,
-            "port": port,
-            "sni": sni,
-            "insecureTls": insecure_tls,
-            "pskB64": psk,
-            "kernelType": "HeadBridge"
-        }
-    ]
+    "nodes": nodes
 }
 
 print(json.dumps(share, ensure_ascii=False, separators=(",", ":")))
@@ -721,16 +840,45 @@ print_qr() {
   fi
 }
 
+format_client_config_list() {
+  local endpoints="$1" endpoint host port index count label
+  local relay="${2:-off}"
+  count="$(printf '%s\n' "$endpoints" | sed '/^$/d' | wc -l | tr -d ' ')"
+  index=1
+  while IFS= read -r endpoint; do
+    endpoint="$(trim_value "$endpoint")"
+    [[ -n "$endpoint" ]] || continue
+    parse_host_port "$endpoint"
+    if [[ "$count" -gt 1 ]]; then
+      label="节点 ${index}"
+    else
+      label="节点"
+    fi
+    host="$PARSED_HOST"
+    port="$PARSED_PORT"
+    cat <<EOF
+  ${label}:
+    host        = $host
+    port        = $port
+    sni         = $TOPFLOW_SNI
+    insecureTls = $TOPFLOW_SKIP_CERT_VERIFY
+    vvipRelay   = $relay
+    pskB64      = $TOPFLOW_PSK
+    kernelType  = HeadBridge
+EOF
+    index=$((index + 1))
+  done <<< "$endpoints"
+}
+
 print_connection_summary() {
-  local endpoint host port link script_path relay_display
-  endpoint="$(detect_public_endpoint)"
-  parse_host_port "$endpoint"
-  host="$PARSED_HOST"
-  port="$PARSED_PORT"
-  link="$(build_topflow_link "$endpoint")"
-  script_path="$(resolve_path "$0")"
+  local endpoints endpoint_lines config_lines link script_path relay_display
+  endpoints="$(detect_public_endpoints)"
+  endpoint_lines="$(printf '%s\n' "$endpoints" | sed '/^$/d; s/^/  /')"
   relay_display="$(resolve_vvip_relay_listen "$TOPFLOW_LISTEN" "$TOPFLOW_VVIP_RELAY_LISTEN")"
   [[ -n "$relay_display" ]] || relay_display="off"
+  config_lines="$(format_client_config_list "$endpoints" "$relay_display")"
+  link="$(build_topflow_link "$endpoints")"
+  script_path="$(resolve_path "$0")"
 
   cat <<EOF
 
@@ -738,7 +886,8 @@ TopFlow 服务端部署完成。
 
 服务名称:      $SERVICE_NAME
 监听地址:      $TOPFLOW_LISTEN
-客户端地址:    $endpoint
+客户端地址:
+$endpoint_lines
 节点名称:      $TOPFLOW_NODE_NAME
 分组名称:      $TOPFLOW_GROUP_NAME
 SNI:           $TOPFLOW_SNI
@@ -748,13 +897,7 @@ PSK:           $TOPFLOW_PSK
 统一脚本:      $script_path
 
 客户端配置清单:
-  host        = $host
-  port        = $port
-  sni         = $TOPFLOW_SNI
-  insecureTls = $TOPFLOW_SKIP_CERT_VERIFY
-  vvipRelay   = $relay_display
-  pskB64      = $TOPFLOW_PSK
-  kernelType  = HeadBridge
+$config_lines
 
 可复制导入链接:
 $link
@@ -774,8 +917,8 @@ EOF
   sudo bash $script_path uninstall --yes
 EOF
 
-  if [[ "$host" == "REPLACE_WITH_PUBLIC_HOST" ]]; then
-    warn "未能自动探测公网地址，请改用 --public-endpoint your.domain.com:${port} 或 --public-endpoint [你的IPv6]:${port} 重新安装，或手动把导入链接里的地址改成真实公网 IP/域名。"
+  if printf '%s\n' "$endpoints" | grep -q 'REPLACE_WITH_PUBLIC_HOST'; then
+    warn "未能自动探测公网地址，请改用 --public-endpoint your.domain.com:端口 或 --public-endpoint [你的IPv6]:端口 重新安装，或手动把导入链接里的地址改成真实公网 IP/域名。"
   fi
 }
 
@@ -870,6 +1013,7 @@ install_server() {
   install_dependencies
   ensure_arch
   generate_or_validate_psk
+  resolve_auto_network_config
   ensure_runtime_user
   install_binary
   configure_binary_bind_capability
