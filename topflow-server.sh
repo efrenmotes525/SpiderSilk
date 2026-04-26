@@ -736,12 +736,22 @@ detect_public_endpoint() {
 
 build_topflow_share_json() {
   local endpoints="$1"
-  local insecure_tls
+  local insecure_tls relay_listen relay_port vvip_enabled
 
   if is_true "$TOPFLOW_SKIP_CERT_VERIFY"; then
     insecure_tls="true"
   else
     insecure_tls="false"
+  fi
+
+  relay_listen="$(resolve_vvip_relay_listen "$TOPFLOW_LISTEN" "$TOPFLOW_VVIP_RELAY_LISTEN")"
+  if [[ -n "$relay_listen" ]]; then
+    parse_host_port "$relay_listen"
+    relay_port="$PARSED_PORT"
+    vvip_enabled="true"
+  else
+    relay_port=""
+    vvip_enabled="false"
   fi
 
   TOPFLOW_SHARE_ENDPOINTS="$endpoints" \
@@ -750,6 +760,8 @@ build_topflow_share_json() {
   TOPFLOW_SHARE_SNI="$TOPFLOW_SNI" \
   TOPFLOW_SHARE_PSK="$TOPFLOW_PSK" \
   TOPFLOW_SHARE_INSECURE_TLS="$insecure_tls" \
+  TOPFLOW_SHARE_VVIP_ENABLED="$vvip_enabled" \
+  TOPFLOW_SHARE_VVIP_RELAY_PORT="$relay_port" \
   python3 <<'PY'
 import json
 import os
@@ -761,6 +773,8 @@ group_name = os.environ["TOPFLOW_SHARE_GROUP_NAME"]
 sni = os.environ["TOPFLOW_SHARE_SNI"]
 psk = os.environ["TOPFLOW_SHARE_PSK"]
 insecure_tls = os.environ["TOPFLOW_SHARE_INSECURE_TLS"].lower() == "true"
+vvip_enabled = os.environ["TOPFLOW_SHARE_VVIP_ENABLED"].lower() == "true"
+vvip_relay_port = os.environ.get("TOPFLOW_SHARE_VVIP_RELAY_PORT", "").strip()
 
 def parse_endpoint(endpoint):
     if endpoint.startswith("["):
@@ -789,7 +803,7 @@ for endpoint in endpoints:
     host, port = parse_endpoint(endpoint)
     family = endpoint_family(host)
     display_name = node_name if len(endpoints) == 1 else f"{node_name} {family}"
-    nodes.append({
+    node = {
         "id": str(uuid.uuid4()),
         "name": display_name,
         "host": host,
@@ -799,7 +813,12 @@ for endpoint in endpoints:
         "insecureTls": insecure_tls,
         "pskB64": psk,
         "kernelType": "HeadBridge"
-    })
+    }
+    if vvip_enabled:
+        node["vvipEnabled"] = True
+        if vvip_relay_port:
+            node["vvipRelayPort"] = int(vvip_relay_port)
+    nodes.append(node)
 
 share = {
     "app": "TopFlow",
@@ -843,6 +862,8 @@ print_qr() {
 format_client_config_list() {
   local endpoints="$1" endpoint host port index count label
   local relay="${2:-off}"
+  local vvip_enabled="false"
+  [[ -n "$relay" && "$relay" != "off" ]] && vvip_enabled="true"
   count="$(printf '%s\n' "$endpoints" | sed '/^$/d' | wc -l | tr -d ' ')"
   index=1
   while IFS= read -r endpoint; do
@@ -862,6 +883,7 @@ format_client_config_list() {
     port        = $port
     sni         = $TOPFLOW_SNI
     insecureTls = $TOPFLOW_SKIP_CERT_VERIFY
+    vvipEnabled = $vvip_enabled
     vvipRelay   = $relay
     pskB64      = $TOPFLOW_PSK
     kernelType  = HeadBridge
