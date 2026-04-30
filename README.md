@@ -1,5 +1,9 @@
 # SpiderSilk / TopFlow Server
 
+欢迎各位大佬加入官方TG群：https://t.me/+ghA_kXJ4h41jYWRk
+欢迎各位大佬加入官方TG群：https://t.me/+ghA_kXJ4h41jYWRk
+欢迎各位大佬加入官方TG群：https://t.me/+ghA_kXJ4h41jYWRk
+
 一键部署 TopFlow/HeadBridge 服务端。仓库地址：<https://github.com/efrenmotes525/SpiderSilk>
 
 本仓库面向 VPS 部署场景，提供 Linux x86_64 服务端二进制与 systemd 安装脚本。安装完成后会自动生成客户端配置清单、`topflow://` 导入链接和终端二维码。
