@@ -17,6 +17,7 @@
 | `headbridge-server` | HeadBridge 服务端二进制，当前为 Linux x86_64 ELF。 |
 | `topflow-server.sh` | 推荐使用的一键安装 / 更新 / 卸载脚本；会生成 TopFlow 导入链接和二维码。 |
 | `headbridge-server.sh` | HeadBridge 原生管理脚本；适合高级参数和 VVIP 回程中继场景。 |
+| `release/headbridge-server-alpine-openrc.sh` | Alpine Linux / OpenRC 专用安装脚本，默认下载 `headbridge-server-alpine-x86_64`。 |
 
 ## 功能特性
 
@@ -233,6 +234,79 @@ Common mapping:
 | `6379` | `6380` |
 
 Cloud security group must allow both the main port and the relay port.
+
+## Alpine / OpenRC 安装
+
+如果你的 VPS 是 Alpine Linux，不要使用 systemd 脚本，改用 `release/headbridge-server-alpine-openrc.sh`。这个脚本会使用 OpenRC 注册服务，并默认下载 Alpine 专用服务端：
+
+```text
+https://raw.githubusercontent.com/efrenmotes525/SpiderSilk/main/headbridge-server-alpine-x86_64
+```
+
+> 你提供的 GitHub `blob` 页面地址也可以传给 `--download-url`，脚本会自动转换成 raw 下载地址，避免下载到 HTML 页面。
+
+### Alpine 一键安装：默认 6379
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/efrenmotes525/SpiderSilk/main/release/headbridge-server-alpine-openrc.sh -o /tmp/headbridge-server-alpine-openrc.sh
+chmod +x /tmp/headbridge-server-alpine-openrc.sh
+sh /tmp/headbridge-server-alpine-openrc.sh install
+```
+
+默认行为：
+
+- 主端口监听 `0.0.0.0:6379`
+- 自动生成 32 字节 Base64 `PSK`
+- 自动生成 `admin token`
+- 自动安装 Alpine 依赖
+- 自动注册并启动 OpenRC 服务
+
+脚本会安装这些 Alpine 依赖：
+
+- `ca-certificates`：让 `curl` 可以正常访问 HTTPS 下载地址
+- `curl`：下载 Alpine 服务端二进制
+- `openssl`：生成和校验 PSK / 管理 Token
+- `openrc`：提供 `rc-service`、`rc-update`、`checkpath`、`start-stop-daemon`
+- `libcap`：需要低端口时提供 `setcap`
+
+### Alpine 开启魅影：6379 + 6380
+
+```sh
+sh /tmp/headbridge-server-alpine-openrc.sh install --vvip-relay-listen auto
+```
+
+需要在云厂商安全组和 Alpine 本机防火墙中放行：
+
+- `6379/tcp`：主连接端口
+- `6380/tcp`：魅影 / VVIP 回程端口
+
+### Alpine 手动指定管理 Token
+
+```sh
+ADMIN_TOKEN="$(openssl rand -base64 32 | tr -d '\r\n')"
+sh /tmp/headbridge-server-alpine-openrc.sh install \
+  --listen 0.0.0.0:6379 \
+  --admin-token "$ADMIN_TOKEN"
+```
+
+如果不传 `--admin-token`，脚本会自动生成。安装完成后会打印 `psk` 和 `admin token`，并保存到：
+
+```sh
+/etc/headbridge-server/headbridge-server.env
+```
+
+手动添加 Alpine 节点到 Windows 客户端时，除了 `host`、`port=6379`、`pskB64`，还要把 `admin token` 填到客户端的 `管理 Token` 字段，否则监控大屏、端口转发、隧道转发无法鉴权。
+
+### Alpine 常用命令
+
+```sh
+rc-service headbridge-server status
+rc-service headbridge-server restart
+tail -f /var/log/messages
+cat /etc/headbridge-server/headbridge-server.env
+```
+
+如果是旧 Alpine 节点升级到新版脚本，执行 `update` 时脚本也会检查旧配置里是否缺少 `admin token`；如果缺少，会自动生成并写回 env，然后重启服务。
 
 ## 客户端新增功能使用说明
 
