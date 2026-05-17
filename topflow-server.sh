@@ -7,7 +7,7 @@ DEFAULT_SERVICE_NAME="topflow-server"
 DEFAULT_INSTALL_DIR="/opt/topflow-server"
 DEFAULT_ETC_DIR="/etc/topflow-server"
 DEFAULT_DOWNLOAD_URL="https://raw.githubusercontent.com/efrenmotes525/SpiderSilk/main/headbridge-server"
-DEFAULT_LISTEN_PORT="8888"
+DEFAULT_LISTEN_PORT="6379"
 
 SERVICE_NAME="${TOPFLOW_SERVICE_NAME:-topflow-server}"
 INSTALL_DIR="${TOPFLOW_INSTALL_DIR:-$DEFAULT_INSTALL_DIR}"
@@ -22,6 +22,7 @@ TOPFLOW_GROUP_NAME="${TOPFLOW_GROUP_NAME:-AutoDeploy}"
 TOPFLOW_SNI="${TOPFLOW_SNI:-www.cloudflare.com}"
 TOPFLOW_VVIP_RELAY_LISTEN="${TOPFLOW_VVIP_RELAY_LISTEN:-off}"
 TOPFLOW_PSK="${TOPFLOW_PSK:-}"
+TOPFLOW_ADMIN_TOKEN="${TOPFLOW_ADMIN_TOKEN:-}"
 TOPFLOW_MAX_CONNECTIONS="${TOPFLOW_MAX_CONNECTIONS:-10000}"
 TOPFLOW_MAX_CONNECTIONS_PER_IP="${TOPFLOW_MAX_CONNECTIONS_PER_IP:-256}"
 TOPFLOW_SKIP_CERT_VERIFY="${TOPFLOW_SKIP_CERT_VERIFY:-true}"
@@ -271,15 +272,16 @@ TopFlow 服务端统一管理脚本
 
 安装参数：
   --psk <Base64>              指定 32 字节 PSK 的 Base64 字符串；不传则自动生成
+  --admin-token <token>       指定管理 Token；不传或传空值则自动生成，用于监控大屏、β 转发、端口转发和隧道转发鉴权
   --listen <host:port|auto[:port]>
-                            监听地址，默认 auto:8888；脚本自动检测 IPv4/IPv6，双栈或 IPv6 主机监听 [::]:port，IPv4-only 主机监听 0.0.0.0:port
+                            监听地址，默认 auto:6379；脚本自动检测 IPv4/IPv6，双栈或 IPv6 主机监听 [::]:port，IPv4-only 主机监听 0.0.0.0:port
   --public-endpoint <h:p[,h:p]>
                             给客户端展示的公网地址；不传时自动探测，双栈会导出 IPv4 与 IPv6 两个节点
   --node-name <name>          客户端节点名称，默认 TopFlow
   --group-name <name>         客户端分组名称，默认 AutoDeploy
   --sni <host>                客户端配置中的 SNI，默认 www.cloudflare.com
   --vvip-relay-listen <host:port|auto|off>
-                            VVIP/phantom return relay listener; auto means main port +1; default off
+                            VVIP/phantom return relay listener; auto means main port +1, e.g. 6379 -> 6380; default off
   --max-connections <num>     最大连接数，默认 10000
   --max-connections-per-ip <num>
                             单 IP 最大并发连接数，默认 256，用于防止 VVIP/Telegram 建连风暴压垮服务端
@@ -316,6 +318,7 @@ parse_install_args() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --psk) TOPFLOW_PSK="$2"; shift 2 ;;
+      --admin-token) TOPFLOW_ADMIN_TOKEN="$2"; shift 2 ;;
       --listen) TOPFLOW_LISTEN="$2"; shift 2 ;;
       --public-endpoint) TOPFLOW_PUBLIC_ENDPOINT="$2"; shift 2 ;;
       --node-name) TOPFLOW_NODE_NAME="$2"; shift 2 ;;
@@ -430,6 +433,15 @@ generate_or_validate_psk() {
   [[ "$decoded_len" == "32" ]] || die "PSK 必须是 Base64 编码，且解码后必须为 32 字节。"
 }
 
+generate_or_validate_admin_token() {
+  if [[ -z "$TOPFLOW_ADMIN_TOKEN" ]]; then
+    TOPFLOW_ADMIN_TOKEN="$(openssl rand -base64 32 | tr -d '\r\n')"
+    log "未提供管理 Token，已自动生成。"
+  fi
+
+  [[ ${#TOPFLOW_ADMIN_TOKEN} -ge 16 ]] || die "管理 Token 长度过短，建议至少 16 个字符。"
+}
+
 load_env_if_exists() {
   if [[ -f "$ENV_FILE" ]]; then
     # shellcheck disable=SC1090
@@ -484,6 +496,7 @@ TOPFLOW_GROUP_NAME='$(escape_single_quotes "$TOPFLOW_GROUP_NAME")'
 TOPFLOW_SNI='$(escape_single_quotes "$TOPFLOW_SNI")'
 TOPFLOW_VVIP_RELAY_LISTEN='$(escape_single_quotes "$TOPFLOW_VVIP_RELAY_LISTEN")'
 TOPFLOW_PSK='$(escape_single_quotes "$TOPFLOW_PSK")'
+TOPFLOW_ADMIN_TOKEN='$(escape_single_quotes "$TOPFLOW_ADMIN_TOKEN")'
 TOPFLOW_MAX_CONNECTIONS='$(escape_single_quotes "$TOPFLOW_MAX_CONNECTIONS")'
 TOPFLOW_MAX_CONNECTIONS_PER_IP='$(escape_single_quotes "$TOPFLOW_MAX_CONNECTIONS_PER_IP")'
 TOPFLOW_SKIP_CERT_VERIFY='$(escape_single_quotes "$TOPFLOW_SKIP_CERT_VERIFY")'
@@ -516,7 +529,7 @@ fi
 source "\$ENV_FILE"
 
 args=(
-  --listen "\${TOPFLOW_LISTEN:-0.0.0.0:8888}"
+  --listen "\${TOPFLOW_LISTEN:-0.0.0.0:6379}"
   --max-connections "\${TOPFLOW_MAX_CONNECTIONS:-10000}"
   --max-connections-per-ip "\${TOPFLOW_MAX_CONNECTIONS_PER_IP:-256}"
 )
@@ -539,6 +552,9 @@ fi
 
 if [[ -n "\${TOPFLOW_PSK:-}" ]]; then
   args+=(--psk "\$TOPFLOW_PSK")
+fi
+if [[ -n "\${TOPFLOW_ADMIN_TOKEN:-}" ]]; then
+  args+=(--admin-token "\$TOPFLOW_ADMIN_TOKEN")
 fi
 if [[ -n "\${TOPFLOW_CA_CERT:-}" ]]; then
   args+=(--ca-cert "\$TOPFLOW_CA_CERT")
@@ -759,6 +775,7 @@ build_topflow_share_json() {
   TOPFLOW_SHARE_GROUP_NAME="$TOPFLOW_GROUP_NAME" \
   TOPFLOW_SHARE_SNI="$TOPFLOW_SNI" \
   TOPFLOW_SHARE_PSK="$TOPFLOW_PSK" \
+  TOPFLOW_SHARE_ADMIN_TOKEN="$TOPFLOW_ADMIN_TOKEN" \
   TOPFLOW_SHARE_INSECURE_TLS="$insecure_tls" \
   TOPFLOW_SHARE_VVIP_ENABLED="$vvip_enabled" \
   TOPFLOW_SHARE_VVIP_RELAY_PORT="$relay_port" \
@@ -772,6 +789,7 @@ node_name = os.environ["TOPFLOW_SHARE_NODE_NAME"]
 group_name = os.environ["TOPFLOW_SHARE_GROUP_NAME"]
 sni = os.environ["TOPFLOW_SHARE_SNI"]
 psk = os.environ["TOPFLOW_SHARE_PSK"]
+admin_token = os.environ.get("TOPFLOW_SHARE_ADMIN_TOKEN", "").strip()
 insecure_tls = os.environ["TOPFLOW_SHARE_INSECURE_TLS"].lower() == "true"
 vvip_enabled = os.environ["TOPFLOW_SHARE_VVIP_ENABLED"].lower() == "true"
 vvip_relay_port = os.environ.get("TOPFLOW_SHARE_VVIP_RELAY_PORT", "").strip()
@@ -814,6 +832,8 @@ for endpoint in endpoints:
         "pskB64": psk,
         "kernelType": "HeadBridge"
     }
+    if admin_token:
+        node["adminToken"] = admin_token
     if vvip_enabled:
         node["vvipEnabled"] = True
         if vvip_relay_port:
@@ -886,6 +906,7 @@ format_client_config_list() {
     vvipEnabled = $vvip_enabled
     vvipRelay   = $relay
     pskB64      = $TOPFLOW_PSK
+    adminToken  = $TOPFLOW_ADMIN_TOKEN
     kernelType  = HeadBridge
 EOF
     index=$((index + 1))
@@ -914,6 +935,7 @@ $endpoint_lines
 分组名称:      $TOPFLOW_GROUP_NAME
 SNI:           $TOPFLOW_SNI
 PSK:           $TOPFLOW_PSK
+管理 Token:    $TOPFLOW_ADMIN_TOKEN
 二进制路径:    $BIN_PATH
 配置文件:      $ENV_FILE
 统一脚本:      $script_path
@@ -1035,6 +1057,7 @@ install_server() {
   install_dependencies
   ensure_arch
   generate_or_validate_psk
+  generate_or_validate_admin_token
   resolve_auto_network_config
   ensure_runtime_user
   install_binary
