@@ -24,6 +24,7 @@
 - 默认从本仓库下载 `headbridge-server`。
 - 默认部署端口统一为 `6379`。
 - 自动生成 32 字节 Base64 PSK；也支持手动指定。
+- 自动生成管理 Token；安装导入链接会带上 `adminToken`，用于监控大屏、`β 转发`、端口转发和隧道转发。
 - 自动输出客户端字段、`topflow://` 导入链接和终端二维码。
 - 默认自动检测 IPv4 / IPv6 / 双栈；双栈 VPS 会自动导出 IPv4 与 IPv6 两个客户端节点。
 - 支持 `install` / `update` / `uninstall`。
@@ -83,16 +84,18 @@ curl -fsSL "https://raw.githubusercontent.com/efrenmotes525/SpiderSilk/main/topf
 curl -fsSL https://raw.githubusercontent.com/efrenmotes525/SpiderSilk/main/topflow-server.sh | sed 's/\r$//' > /tmp/topflow-server.sh && chmod +x /tmp/topflow-server.sh && /tmp/topflow-server.sh install --listen [::]:6379 --public-endpoint [2001:db8::1]:6379
 ```
 
-### 指定固定 PSK
+### 指定固定 PSK 和管理 Token
 
 ```bash
 PSK="$(openssl rand -base64 32 | tr -d '\r\n')"
+ADMIN_TOKEN="$(openssl rand -base64 32 | tr -d '\r\n')"
 curl -fsSL https://raw.githubusercontent.com/efrenmotes525/SpiderSilk/main/topflow-server.sh | sed 's/\r$//' > /tmp/topflow-server.sh
 chmod +x /tmp/topflow-server.sh
 /tmp/topflow-server.sh install \
   --listen 0.0.0.0:6379 \
   --public-endpoint your.domain.com:6379 \
   --psk "$PSK" \
+  --admin-token "$ADMIN_TOKEN" \
   --node-name "TopFlow" \
   --group-name "AutoDeploy"
 ```
@@ -110,6 +113,7 @@ chmod +x /tmp/topflow-server.sh
   vvipEnabled = false
   vvipRelay   = off
   pskB64      = <自动生成或手动指定的 PSK>
+  adminToken  = <自动生成或手动指定的管理 Token>
   kernelType  = HeadBridge
 
 可复制导入链接:
@@ -119,7 +123,7 @@ topflow://import?zip=deflate&data=...
 ...
 ```
 
-在 TopFlow 客户端中可以直接扫码或复制 `topflow://` 链接导入节点。
+在 TopFlow 客户端中可以直接扫码或复制 `topflow://` 链接导入节点。导入链接会同时包含 `pskB64` 和 `adminToken`：`pskB64` 用于基础连接，`adminToken` 用于监控大屏、端口转发、隧道转发等管理功能。
 
 ## 常用命令
 
@@ -177,6 +181,7 @@ curl -fsSL https://raw.githubusercontent.com/efrenmotes525/SpiderSilk/main/topfl
 | `--listen <host:port\|auto[:port]>` | 服务监听地址，默认 `auto:6379`。脚本自动检测网络栈：双栈/IPv6-only 用 `[::]:port`，IPv4-only 用 `0.0.0.0:port`。 |
 | `--public-endpoint <host:port[,host:port]>` | 写入客户端配置的公网地址。不传时自动探测；双栈会生成 IPv4 与 IPv6 两个节点。 |
 | `--psk <Base64>` | 32 字节 PSK 的 Base64 字符串；不传则自动生成。 |
+| `--admin-token <token>` | 管理 Token；不传或传空值时自动生成。客户端监控大屏、`β 转发`、端口转发、隧道转发都需要它鉴权。 |
 | `--node-name <name>` | 导入到客户端后的节点名称，默认 `TopFlow`。 |
 | `--group-name <name>` | 导入到客户端后的分组名称，默认 `AutoDeploy`。 |
 | `--sni <host>` | 客户端配置中的 SNI，默认 `www.cloudflare.com`。 |
@@ -201,12 +206,13 @@ curl -fsSL https://raw.githubusercontent.com/efrenmotes525/SpiderSilk/main/topfl
 TOPFLOW_NODE_NAME="My VPS" \
 TOPFLOW_GROUP_NAME="Production" \
 TOPFLOW_SNI="www.cloudflare.com" \
+TOPFLOW_ADMIN_TOKEN="$(openssl rand -base64 32 | tr -d '\r\n')" \
 /tmp/topflow-server.sh install --listen 0.0.0.0:6379 --public-endpoint your.domain.com:6379
 ```
 
 ## VVIP / Phantom return relay
 
-`topflow-server.sh` 已支持 `--vvip-relay-listen` 直接开启魅影回程。安装器会同时打印客户端配置、`topflow://` 导入链接、终端二维码、PSK 和回程监听端口。
+`topflow-server.sh` 已支持 `--vvip-relay-listen` 直接开启魅影回程。安装器会同时打印客户端配置、`topflow://` 导入链接、终端二维码、PSK、管理 Token 和回程监听端口。
 
 ### One-line install: 6379 + 6380
 
@@ -241,6 +247,8 @@ Cloud security group must allow both the main port and the relay port.
 3. 点击顶部 `⭳ 粘贴`
 4. 导入后点击 `◔ 全测`
 5. 选择延迟正常的节点并连接
+
+如果你是复制脚本自动生成的导入链接，客户端会自动带上 `管理 Token`。如果你是手动添加节点，除了 `host`、`port`、`pskB64` 之外，也要把安装输出里的 `管理 Token` 填到客户端节点编辑页的 `管理 Token` 字段，否则基础连接可能正常，但监控大屏、端口转发和隧道转发会因为没有管理鉴权而不可用。
 
 主界面上最常用的按钮通常包括：
 
@@ -293,6 +301,7 @@ Cloud security group must allow both the main port and the relay port.
 如果不生效，优先检查：
 
 - 当前节点是否在线
+- 当前节点是否已经填写 `管理 Token`
 - `监听端口` 是否填错
 - `目标 IP / 域名` 是否填错
 - `目标端口` 是否填错
@@ -358,6 +367,7 @@ Cloud security group must allow both the main port and the relay port.
 如果监控大屏没有数据，优先检查：
 
 - 节点是否已经在线
+- 节点配置里是否有 `管理 Token`
 - 服务端是否已更新到较新版本
 - 当前是否使用的是 HeadBridge 节点
 - 客户端日志和服务端日志是否报错
@@ -378,6 +388,7 @@ ss -ltnp | grep -E ':(6379|6380)\b'
 - VPS 安全组是否放行主端口。
 - 系统防火墙是否放行主端口。
 - 客户端 `pskB64` 是否和服务端一致。
+- 手动添加节点时，客户端 `管理 Token` 是否和 `/etc/topflow-server/topflow-server.env` 里的 `TOPFLOW_ADMIN_TOKEN` 一致。
 
 ### 2. 服务端启动失败
 
@@ -414,6 +425,7 @@ journalctl -u topflow-server -n 100 --no-pager
 优先检查：
 
 - 当前节点是否已经连接成功
+- 当前节点是否已经导入或填写 `管理 Token`
 - 转发策略是否已经点击 `保存转发策略`
 - 端口转发里的 `监听端口` / `目标 IP / 域名` / `目标端口` 是否正确
 - 隧道转发里的 `目标用户名` / `目标密码` / `目标隧道` 是否正确
@@ -424,13 +436,14 @@ journalctl -u topflow-server -n 100 --no-pager
 优先检查：
 
 - 当前监控的节点是否在线
+- 当前节点是否已经导入或填写 `管理 Token`
 - 是否点击过 `立即刷新`
 - 服务端是否较新
 - 客户端和服务端日志是否有持续报错
 
 ## 安全建议
 
-- 妥善保存安装时输出的 `PSK`，客户端必须使用同一个 `pskB64`。
-- 不要把包含真实 PSK 的日志、截图或导入链接公开发布。
+- 妥善保存安装时输出的 `PSK` 和 `管理 Token`。客户端必须使用同一个 `pskB64`，管理功能必须使用同一个 `adminToken`。
+- 不要把包含真实 PSK、管理 Token 或导入链接的日志、截图公开发布。
 - 推荐统一使用 `6379`，魅影回程统一使用 `6380`，这样最方便部署、排障和批量维护。
 - 多节点部署时，建议每个节点使用不同 PSK。
