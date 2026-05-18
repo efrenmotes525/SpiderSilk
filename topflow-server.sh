@@ -37,6 +37,9 @@ TOPFLOW_DOWNLOAD_URL="${TOPFLOW_DOWNLOAD_URL:-$DEFAULT_DOWNLOAD_URL}"
 KEEP_CONFIG="${KEEP_CONFIG:-false}"
 REMOVE_USER="${REMOVE_USER:-true}"
 ASSUME_YES="${ASSUME_YES:-false}"
+DETECTED_PUBLIC_IPV4="${DETECTED_PUBLIC_IPV4:-}"
+DETECTED_PUBLIC_IPV6="${DETECTED_PUBLIC_IPV6:-}"
+DETECTED_PUBLIC_IPS_READY="${DETECTED_PUBLIC_IPS_READY:-false}"
 
 refresh_paths() {
   BIN_PATH="${INSTALL_DIR}/${APP_NAME}"
@@ -146,22 +149,162 @@ auto_listen_port() {
   printf '%s' "$port"
 }
 
-detect_public_ipv4() {
+is_public_ipv4() {
+  local ip="${1:-}" a b c d
+  [[ "$ip" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || return 1
+  IFS='.' read -r a b c d <<< "$ip"
+  for octet in "$a" "$b" "$c" "$d"; do
+    [[ "$octet" =~ ^[0-9]+$ ]] || return 1
+    (( octet >= 0 && octet <= 255 )) || return 1
+  done
+
+  (( a == 0 )) && return 1
+  (( a == 10 )) && return 1
+  (( a == 100 && b >= 64 && b <= 127 )) && return 1
+  (( a == 127 )) && return 1
+  (( a == 169 && b == 254 )) && return 1
+  (( a == 172 && b >= 16 && b <= 31 )) && return 1
+  (( a == 192 && b == 0 && c == 0 )) && return 1
+  (( a == 192 && b == 0 && c == 2 )) && return 1
+  (( a == 192 && b == 168 )) && return 1
+  (( a == 198 && (b == 18 || b == 19) )) && return 1
+  (( a == 198 && b == 51 && c == 100 )) && return 1
+  (( a == 203 && b == 0 && c == 113 )) && return 1
+  (( a >= 224 )) && return 1
+
+  return 0
+}
+
+is_public_ipv6() {
+  local ip lower_ip
+  ip="$(normalize_host "${1:-}")"
+  [[ -n "$ip" && "$ip" == *:* ]] || return 1
+  lower_ip="$(lower "$ip")"
+
+  [[ "$lower_ip" == "::" || "$lower_ip" == "::1" ]] && return 1
+  [[ "$lower_ip" == fc* || "$lower_ip" == fd* ]] && return 1
+  [[ "$lower_ip" == fe8* || "$lower_ip" == fe9* || "$lower_ip" == fea* || "$lower_ip" == feb* ]] && return 1
+  [[ "$lower_ip" == 2001:db8* ]] && return 1
+
+  return 0
+}
+
+extract_route_source_ip() {
+  local family="$1" target="$2"
+  command -v ip >/dev/null 2>&1 || return 0
+  ip "-$family" route get "$target" 2>/dev/null | sed -n 's/.* src \([^ ]*\).*/\1/p' | head -n 1
+}
+
+detect_public_ipv4_from_routes() {
   local ip
-  ip="$(curl -4fsSL --max-time 5 https://api.ipify.org 2>/dev/null | tr -d '\r\n' || true)"
-  if [[ -z "$ip" ]]; then
-    ip="$(curl -4fsSL --max-time 5 https://ipv4.icanhazip.com 2>/dev/null | tr -d '\r\n' || true)"
+  for target in "1.1.1.1" "8.8.8.8" "223.5.5.5"; do
+    ip="$(extract_route_source_ip 4 "$target")"
+    if is_public_ipv4 "$ip"; then
+      printf '%s' "$ip"
+      return 0
+    fi
+  done
+}
+
+detect_public_ipv6_from_routes() {
+  local ip
+  for target in "2606:4700:4700::1111" "2001:4860:4860::8888" "2400:3200::1"; do
+    ip="$(extract_route_source_ip 6 "$target")"
+    if is_public_ipv6 "$ip"; then
+      printf '%s' "$ip"
+      return 0
+    fi
+  done
+}
+
+detect_public_ipv4_from_interfaces() {
+  local ip
+  command -v ip >/dev/null 2>&1 || return 0
+  while IFS= read -r ip; do
+    if is_public_ipv4 "$ip"; then
+      printf '%s' "$ip"
+      return 0
+    fi
+  done < <(ip -o -4 addr show up scope global 2>/dev/null | awk '{print $4}' | cut -d/ -f1)
+}
+
+detect_public_ipv6_from_interfaces() {
+  local ip
+  command -v ip >/dev/null 2>&1 || return 0
+  while IFS= read -r ip; do
+    if is_public_ipv6 "$ip"; then
+      printf '%s' "$ip"
+      return 0
+    fi
+  done < <(ip -o -6 addr show up scope global 2>/dev/null | awk '{print $4}' | cut -d/ -f1)
+}
+
+detect_public_ipv4_from_web() {
+  local ip
+  for url in \
+    "https://api.ipify.org" \
+    "https://ipv4.icanhazip.com" \
+    "https://ifconfig.me/ip" \
+    "https://v4.ident.me"; do
+    ip="$(curl -4fsSL --max-time 5 "$url" 2>/dev/null | tr -d '\r\n' || true)"
+    if is_public_ipv4 "$ip"; then
+      printf '%s' "$ip"
+      return 0
+    fi
+  done
+}
+
+detect_public_ipv6_from_web() {
+  local ip
+  for url in \
+    "https://api64.ipify.org" \
+    "https://ipv6.icanhazip.com" \
+    "https://ifconfig.me/ip" \
+    "https://v6.ident.me"; do
+    ip="$(curl -6fsSL --max-time 5 "$url" 2>/dev/null | tr -d '\r\n' || true)"
+    if is_public_ipv6 "$ip"; then
+      printf '%s' "$ip"
+      return 0
+    fi
+  done
+}
+
+cache_public_ips() {
+  is_true "$DETECTED_PUBLIC_IPS_READY" && return 0
+
+  DETECTED_PUBLIC_IPV4="$(detect_public_ipv4_from_routes)"
+  if ! is_public_ipv4 "$DETECTED_PUBLIC_IPV4"; then
+    DETECTED_PUBLIC_IPV4="$(detect_public_ipv4_from_interfaces)"
   fi
-  printf '%s' "$ip"
+  if ! is_public_ipv4 "$DETECTED_PUBLIC_IPV4"; then
+    DETECTED_PUBLIC_IPV4="$(detect_public_ipv4_from_web)"
+  fi
+  if ! is_public_ipv4 "$DETECTED_PUBLIC_IPV4"; then
+    DETECTED_PUBLIC_IPV4=""
+  fi
+
+  DETECTED_PUBLIC_IPV6="$(detect_public_ipv6_from_routes)"
+  if ! is_public_ipv6 "$DETECTED_PUBLIC_IPV6"; then
+    DETECTED_PUBLIC_IPV6="$(detect_public_ipv6_from_interfaces)"
+  fi
+  if ! is_public_ipv6 "$DETECTED_PUBLIC_IPV6"; then
+    DETECTED_PUBLIC_IPV6="$(detect_public_ipv6_from_web)"
+  fi
+  if ! is_public_ipv6 "$DETECTED_PUBLIC_IPV6"; then
+    DETECTED_PUBLIC_IPV6=""
+  fi
+
+  DETECTED_PUBLIC_IPS_READY="true"
+}
+
+detect_public_ipv4() {
+  cache_public_ips
+  printf '%s' "$DETECTED_PUBLIC_IPV4"
 }
 
 detect_public_ipv6() {
-  local ip
-  ip="$(curl -6fsSL --max-time 5 https://api64.ipify.org 2>/dev/null | tr -d '\r\n' || true)"
-  if [[ -z "$ip" ]]; then
-    ip="$(curl -6fsSL --max-time 5 https://ipv6.icanhazip.com 2>/dev/null | tr -d '\r\n' || true)"
-  fi
-  printf '%s' "$ip"
+  cache_public_ips
+  printf '%s' "$DETECTED_PUBLIC_IPV6"
 }
 
 describe_ip_stack() {
