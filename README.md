@@ -326,6 +326,55 @@ cat /etc/headbridge-server/headbridge-server.env
 
 如果是旧 Alpine 节点升级到新版脚本，执行 `update` 时脚本也会检查旧配置里是否缺少 `admin token`；如果缺少，会自动生成并写回 env，然后重启服务。
 
+## 通用 SOCKS5 一键脚本
+
+仓库根目录还提供了一个独立的通用脚本 `install_socks5_proxy.sh`，目标就是同一个脚本覆盖主流 Linux：
+
+- Debian / Ubuntu：自动使用 `apt`
+- CentOS / RHEL：自动使用 `dnf` 或 `yum`
+- Alpine：自动使用 `apk`，并兼容 `OpenRC`
+- `systemd` 和 `OpenRC` 都会自动识别
+
+脚本入口保持单文件发布，发布后可直接使用：
+
+```text
+https://raw.githubusercontent.com/efrenmotes525/SpiderSilk/refs/heads/main/install_socks5_proxy.sh
+```
+
+推荐的通用调用方式是先下载再用 `sh` 执行，这样 Debian、Ubuntu、CentOS、Alpine 都一致：
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/efrenmotes525/SpiderSilk/refs/heads/main/install_socks5_proxy.sh -o /tmp/install_socks5_proxy.sh
+sh /tmp/install_socks5_proxy.sh
+```
+
+如果你要边下载边执行，也可以：
+
+```sh
+wget -qO- https://raw.githubusercontent.com/efrenmotes525/SpiderSilk/refs/heads/main/install_socks5_proxy.sh | sh -s --
+```
+
+在确认机器装有 `bash` 时，也兼容原来的入口写法：
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/efrenmotes525/SpiderSilk/refs/heads/main/install_socks5_proxy.sh)
+```
+
+常用参数示例：
+
+```sh
+sh /tmp/install_socks5_proxy.sh --port 2080 --username demo --password strong-pass
+sh /tmp/install_socks5_proxy.sh --ipv4-only
+sh /tmp/install_socks5_proxy.sh uninstall --yes
+sh /tmp/install_socks5_proxy.sh status
+```
+
+安装完成后脚本会自动输出：
+
+- `socks5://用户名:密码@IPv4:端口`
+- `socks5://用户名:密码@[IPv6]:端口`
+- 服务状态、配置文件路径和日志路径
+
 ## 客户端新增功能使用说明
 
 下面这部分是给已经成功部署服务端、并已经把节点导入到 Windows 客户端之后使用的。客户端当前已经支持 `β 转发`、端口转发、隧道转发、监控大屏等功能。
