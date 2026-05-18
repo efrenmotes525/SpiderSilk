@@ -248,7 +248,7 @@ https://raw.githubusercontent.com/efrenmotes525/SpiderSilk/main/headbridge-serve
 ### Alpine 一键安装：默认 6379
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/efrenmotes525/SpiderSilk/main/release/headbridge-server-alpine-openrc.sh -o /tmp/headbridge-server-alpine-openrc.sh
+curl -fsSL https://github.com/efrenmotes525/SpiderSilk/blob/main/headbridge-server-alpine-openrc.sh -o /tmp/headbridge-server-alpine-openrc.sh
 chmod +x /tmp/headbridge-server-alpine-openrc.sh
 sh /tmp/headbridge-server-alpine-openrc.sh install
 ```
