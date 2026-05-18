@@ -268,6 +268,7 @@ sh /tmp/headbridge-server-alpine-openrc.sh install
 - 主端口监听 `0.0.0.0:6379`
 - 自动生成 32 字节 Base64 `PSK`
 - 自动生成 `admin token`
+- 自动输出 `topflow://` 分享链接
 - 自动安装 Alpine 依赖
 - 自动注册并启动 OpenRC 服务
 
@@ -278,6 +279,7 @@ sh /tmp/headbridge-server-alpine-openrc.sh install
 - `openssl`：生成和校验 PSK / 管理 Token
 - `openrc`：提供 `rc-service`、`rc-update`、`checkpath`、`start-stop-daemon`
 - `libcap`：需要低端口时提供 `setcap`
+- `python3`：生成 `topflow://` 分享链接
 
 ### Alpine 开启魅影：6379 + 6380
 
@@ -305,7 +307,7 @@ sh /tmp/headbridge-server-alpine-openrc.sh install \
   --admin-token "$ADMIN_TOKEN"
 ```
 
-如果不传 `--admin-token`，脚本会自动生成。安装完成后会打印 `psk` 和 `admin token`，并保存到：
+如果不传 `--admin-token`，脚本会自动生成。安装完成后会打印 `psk`、`admin token` 和 `topflow://` 分享链接，并保存到：
 
 ```sh
 /etc/headbridge-server/headbridge-server.env
