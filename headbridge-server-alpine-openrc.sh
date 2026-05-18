@@ -10,7 +10,7 @@ DEFAULT_LISTEN="0.0.0.0:6379"
 DEFAULT_MAX_CONNECTIONS="10000"
 DEFAULT_MAX_CONNECTIONS_PER_IP="256"
 DEFAULT_FORWARDING_CONFIG="topflow-forwarding.json"
-DEFAULT_DOWNLOAD_URL="https://raw.githubusercontent.com/efrenmotes525/SpiderSilk/main/headbridge-server-alpine-x86_64"
+DEFAULT_DOWNLOAD_URL="https://raw.githubusercontent.com/efrenmotes525/SpiderSilk/refs/heads/main/headbridge-server-alpine-x86_64"
 LOCAL_BINARY_NAME="headbridge-server-alpine-x86_64"
 ALPINE_DEPENDENCIES="ca-certificates curl openssl openrc libcap"
 
@@ -56,6 +56,10 @@ refresh_paths
 
 log() {
   printf '[%s] %s\n' "$DISPLAY_NAME" "$*"
+}
+
+log_stderr() {
+  printf '[%s] %s\n' "$DISPLAY_NAME" "$*" >&2
 }
 
 warn() {
@@ -218,7 +222,7 @@ Default local binary lookup:
   1. ./headbridge-server-alpine-x86_64
   2. ./headbridge-server
   3. download from the default Alpine URL:
-     https://raw.githubusercontent.com/efrenmotes525/SpiderSilk/main/headbridge-server-alpine-x86_64
+     https://raw.githubusercontent.com/efrenmotes525/SpiderSilk/refs/heads/main/headbridge-server-alpine-x86_64
 
 Alpine dependencies installed by this script:
   ca-certificates  TLS trust store for HTTPS downloads
@@ -345,7 +349,7 @@ normalize_download_url() {
       rest=${rest#*/blob/}
       branch=${rest%%/*}
       path=${rest#*/}
-      printf 'https://raw.githubusercontent.com/%s/%s/%s/%s' "$owner" "$repo" "$branch" "$path"
+      printf 'https://raw.githubusercontent.com/%s/%s/refs/heads/%s/%s' "$owner" "$repo" "$branch" "$path"
       ;;
     *)
       printf '%s' "$url"
@@ -374,12 +378,12 @@ copy_or_download_binary() {
   tmp_file=$(mktemp)
   case "$source_ref" in
     http://*|https://*)
-      log "downloading Alpine binary from $source_ref"
+      log_stderr "downloading Alpine binary from $source_ref"
       curl -fsSL "$source_ref" -o "$tmp_file"
       ;;
     *)
       [ -f "$source_ref" ] || die "binary not found: $source_ref"
-      log "using local binary $source_ref"
+      log_stderr "using local binary $source_ref"
       cp "$source_ref" "$tmp_file"
       ;;
   esac
