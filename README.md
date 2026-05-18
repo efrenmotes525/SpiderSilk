@@ -237,10 +237,14 @@ Cloud security group must allow both the main port and the relay port.
 
 ## Alpine / OpenRC 安装
 
-如果你的 VPS 是 Alpine Linux，不要使用 systemd 脚本，改用 `release/headbridge-server-alpine-openrc.sh`。这个脚本会使用 OpenRC 注册服务，并默认下载 Alpine 专用服务端：
+如果你的 VPS 是 Alpine Linux，不要使用 systemd 脚本，改用 Alpine / OpenRC 专用安装脚本。仓库内维护文件位于 `release/headbridge-server-alpine-openrc.sh`，实际一键安装请直接使用下面这个可访问地址。脚本会使用 OpenRC 注册服务，并默认下载 Alpine 专用服务端：
 
 ```text
-https://raw.githubusercontent.com/efrenmotes525/SpiderSilk/main/headbridge-server-alpine-x86_64
+安装脚本：
+https://raw.githubusercontent.com/efrenmotes525/SpiderSilk/refs/heads/main/headbridge-server-alpine-openrc.sh
+
+服务端二进制：
+https://raw.githubusercontent.com/efrenmotes525/SpiderSilk/refs/heads/main/headbridge-server-alpine-x86_64
 ```
 
 > 你提供的 GitHub `blob` 页面地址也可以传给 `--download-url`，脚本会自动转换成 raw 下载地址，避免下载到 HTML 页面。
@@ -248,7 +252,13 @@ https://raw.githubusercontent.com/efrenmotes525/SpiderSilk/main/headbridge-serve
 ### Alpine 一键安装：默认 6379
 
 ```sh
-curl -fsSL https://github.com/efrenmotes525/SpiderSilk/blob/main/headbridge-server-alpine-openrc.sh -o /tmp/headbridge-server-alpine-openrc.sh
+wget -qO- https://raw.githubusercontent.com/efrenmotes525/SpiderSilk/refs/heads/main/headbridge-server-alpine-openrc.sh | sed 's/\r$//' | sh -s -- install
+```
+
+如果你更习惯先下载到本地再执行：
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/efrenmotes525/SpiderSilk/refs/heads/main/headbridge-server-alpine-openrc.sh -o /tmp/headbridge-server-alpine-openrc.sh
 chmod +x /tmp/headbridge-server-alpine-openrc.sh
 sh /tmp/headbridge-server-alpine-openrc.sh install
 ```
@@ -270,6 +280,12 @@ sh /tmp/headbridge-server-alpine-openrc.sh install
 - `libcap`：需要低端口时提供 `setcap`
 
 ### Alpine 开启魅影：6379 + 6380
+
+```sh
+wget -qO- https://raw.githubusercontent.com/efrenmotes525/SpiderSilk/refs/heads/main/headbridge-server-alpine-openrc.sh | sed 's/\r$//' | sh -s -- install --vvip-relay-listen auto
+```
+
+如果已经先把脚本下载到 `/tmp/headbridge-server-alpine-openrc.sh`：
 
 ```sh
 sh /tmp/headbridge-server-alpine-openrc.sh install --vvip-relay-listen auto
