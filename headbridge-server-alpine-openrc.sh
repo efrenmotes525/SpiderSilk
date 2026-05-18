@@ -12,7 +12,7 @@ DEFAULT_MAX_CONNECTIONS_PER_IP="256"
 DEFAULT_FORWARDING_CONFIG="topflow-forwarding.json"
 DEFAULT_DOWNLOAD_URL="https://raw.githubusercontent.com/efrenmotes525/SpiderSilk/refs/heads/main/headbridge-server-alpine-x86_64"
 LOCAL_BINARY_NAME="headbridge-server-alpine-x86_64"
-ALPINE_DEPENDENCIES="ca-certificates curl openssl openrc libcap"
+ALPINE_DEPENDENCIES="ca-certificates curl openssl openrc libcap python3"
 
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 
@@ -23,6 +23,10 @@ HEADBRIDGE_USER="${HEADBRIDGE_USER:-headbridge}"
 HEADBRIDGE_GROUP="${HEADBRIDGE_GROUP:-headbridge}"
 
 HEADBRIDGE_LISTEN="${HEADBRIDGE_LISTEN:-$DEFAULT_LISTEN}"
+HEADBRIDGE_PUBLIC_ENDPOINT="${HEADBRIDGE_PUBLIC_ENDPOINT:-}"
+HEADBRIDGE_NODE_NAME="${HEADBRIDGE_NODE_NAME:-TopFlow}"
+HEADBRIDGE_GROUP_NAME="${HEADBRIDGE_GROUP_NAME:-AutoDeploy}"
+HEADBRIDGE_SNI="${HEADBRIDGE_SNI:-www.cloudflare.com}"
 HEADBRIDGE_PSK="${HEADBRIDGE_PSK:-}"
 HEADBRIDGE_MAX_CONNECTIONS="${HEADBRIDGE_MAX_CONNECTIONS:-$DEFAULT_MAX_CONNECTIONS}"
 HEADBRIDGE_MAX_CONNECTIONS_PER_IP="${HEADBRIDGE_MAX_CONNECTIONS_PER_IP:-$DEFAULT_MAX_CONNECTIONS_PER_IP}"
@@ -42,6 +46,9 @@ HEADBRIDGE_DOWNLOAD_URL="${HEADBRIDGE_DOWNLOAD_URL:-$DEFAULT_DOWNLOAD_URL}"
 KEEP_CONFIG="${KEEP_CONFIG:-false}"
 REMOVE_USER="${REMOVE_USER:-true}"
 ASSUME_YES="${ASSUME_YES:-false}"
+DETECTED_PUBLIC_IPV4="${DETECTED_PUBLIC_IPV4:-}"
+DETECTED_PUBLIC_IPV6="${DETECTED_PUBLIC_IPV6:-}"
+DETECTED_PUBLIC_IPS_READY="${DETECTED_PUBLIC_IPS_READY:-false}"
 
 refresh_paths() {
   BIN_PATH="${INSTALL_DIR}/${APP_NAME}"
@@ -123,6 +130,105 @@ format_endpoint() {
   esac
 }
 
+is_wildcard_host() {
+  host=$(normalize_host "$1")
+  [ "$host" = "0.0.0.0" ] || [ "$host" = "::" ]
+}
+
+trim_value() {
+  value="${1:-}"
+  printf '%s' "$value" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//'
+}
+
+is_public_ipv4() {
+  ip="${1:-}"
+  printf '%s\n' "$ip" | awk -F. '
+    NF != 4 { exit 1 }
+    {
+      for (i = 1; i <= 4; i++) {
+        if ($i !~ /^[0-9]+$/ || $i < 0 || $i > 255) exit 1
+      }
+      a = $1 + 0
+      b = $2 + 0
+      c = $3 + 0
+      if (a == 0 || a == 10 || a == 127 || a >= 224) exit 1
+      if (a == 100 && b >= 64 && b <= 127) exit 1
+      if (a == 169 && b == 254) exit 1
+      if (a == 172 && b >= 16 && b <= 31) exit 1
+      if (a == 192 && b == 0 && (c == 0 || c == 2)) exit 1
+      if (a == 192 && b == 168) exit 1
+      if (a == 198 && (b == 18 || b == 19)) exit 1
+      if (a == 198 && b == 51 && c == 100) exit 1
+      if (a == 203 && b == 0 && c == 113) exit 1
+      exit 0
+    }
+  ' >/dev/null 2>&1
+}
+
+is_public_ipv6() {
+  ip=$(normalize_host "${1:-}")
+  [ -n "$ip" ] || return 1
+  case "$ip" in
+    *:*) ;;
+    *) return 1 ;;
+  esac
+  lower_ip=$(lower "$ip")
+  case "$lower_ip" in
+    ::|::1|fc*|fd*|fe8*|fe9*|fea*|feb*|2001:db8*) return 1 ;;
+  esac
+  return 0
+}
+
+detect_public_ipv4_from_web() {
+  for url in \
+    "https://api.ipify.org" \
+    "https://ipv4.icanhazip.com" \
+    "https://ifconfig.me/ip"
+  do
+    ip=$(curl -4 -fsS --max-time 5 "$url" 2>/dev/null | tr -d '\r\n' || true)
+    if is_public_ipv4 "$ip"; then
+      printf '%s' "$ip"
+      return 0
+    fi
+  done
+}
+
+detect_public_ipv6_from_web() {
+  for url in \
+    "https://api64.ipify.org" \
+    "https://ipv6.icanhazip.com"
+  do
+    ip=$(curl -6 -fsS --max-time 5 "$url" 2>/dev/null | tr -d '\r\n' || true)
+    if is_public_ipv6 "$ip"; then
+      printf '%s' "$ip"
+      return 0
+    fi
+  done
+}
+
+cache_public_ips() {
+  is_true "$DETECTED_PUBLIC_IPS_READY" && return 0
+  DETECTED_PUBLIC_IPV4=$(detect_public_ipv4_from_web || true)
+  if ! is_public_ipv4 "$DETECTED_PUBLIC_IPV4"; then
+    DETECTED_PUBLIC_IPV4=""
+  fi
+  DETECTED_PUBLIC_IPV6=$(detect_public_ipv6_from_web || true)
+  if ! is_public_ipv6 "$DETECTED_PUBLIC_IPV6"; then
+    DETECTED_PUBLIC_IPV6=""
+  fi
+  DETECTED_PUBLIC_IPS_READY="true"
+}
+
+detect_public_ipv4() {
+  cache_public_ips
+  printf '%s' "$DETECTED_PUBLIC_IPV4"
+}
+
+detect_public_ipv6() {
+  cache_public_ips
+  printf '%s' "$DETECTED_PUBLIC_IPV6"
+}
+
 resolve_vvip_relay_listen() {
   listen_value="$1"
   relay_value="${2:-off}"
@@ -182,6 +288,11 @@ Commands:
 Install options:
   --psk <Base64>                 32-byte PSK in Base64; auto-generated if omitted
   --listen <host:port>           default: 0.0.0.0:6379
+  --public-endpoint <host:port[,host:port]>
+                                 client-facing public endpoint; auto-detected when omitted
+  --node-name <name>             client node name, default: TopFlow
+  --group-name <name>            client group name, default: AutoDeploy
+  --sni <host>                   client SNI, default: www.cloudflare.com
   --vvip-relay-listen <auto|off|host:port>
                                  default: off; auto means main port + 1, e.g. 6379 -> 6380
   --max-connections <num>        default: 10000
@@ -206,6 +317,10 @@ Install options:
 Update options:
   --binary-path <path>           replace with a local binary
   --download-url <url>           replace from a remote URL
+  --public-endpoint <host:port[,host:port]>
+  --node-name <name>
+  --group-name <name>
+  --sni <host>
   --service-name <name>
   --install-dir <dir>
   --etc-dir <dir>
@@ -230,6 +345,7 @@ Alpine dependencies installed by this script:
   openssl          generate and validate PSK/admin token
   openrc           rc-service, rc-update, checkpath, start-stop-daemon
   libcap           setcap for privileged ports when needed
+  python3          generate TopFlow share links
 EOF
 }
 
@@ -238,6 +354,10 @@ parse_install_args() {
     case "$1" in
       --psk) HEADBRIDGE_PSK="$2"; shift 2 ;;
       --listen) HEADBRIDGE_LISTEN="$2"; shift 2 ;;
+      --public-endpoint) HEADBRIDGE_PUBLIC_ENDPOINT="$2"; shift 2 ;;
+      --node-name) HEADBRIDGE_NODE_NAME="$2"; shift 2 ;;
+      --group-name) HEADBRIDGE_GROUP_NAME="$2"; shift 2 ;;
+      --sni) HEADBRIDGE_SNI="$2"; shift 2 ;;
       --vvip-relay-listen) HEADBRIDGE_VVIP_RELAY_LISTEN="$2"; shift 2 ;;
       --max-connections) HEADBRIDGE_MAX_CONNECTIONS="$2"; shift 2 ;;
       --max-connections-per-ip) HEADBRIDGE_MAX_CONNECTIONS_PER_IP="$2"; shift 2 ;;
@@ -269,6 +389,10 @@ parse_update_args() {
     case "$1" in
       --binary-path) HEADBRIDGE_BINARY_PATH="$2"; shift 2 ;;
       --download-url) HEADBRIDGE_DOWNLOAD_URL="$2"; shift 2 ;;
+      --public-endpoint) HEADBRIDGE_PUBLIC_ENDPOINT="$2"; shift 2 ;;
+      --node-name) HEADBRIDGE_NODE_NAME="$2"; shift 2 ;;
+      --group-name) HEADBRIDGE_GROUP_NAME="$2"; shift 2 ;;
+      --sni) HEADBRIDGE_SNI="$2"; shift 2 ;;
       --service-name) SERVICE_NAME="$2"; shift 2 ;;
       --install-dir) INSTALL_DIR="$2"; shift 2 ;;
       --etc-dir) ETC_DIR="$2"; shift 2 ;;
@@ -417,11 +541,219 @@ configure_bind_capability() {
   fi
 }
 
+normalize_public_endpoints() {
+  value="$1"
+  default_port="$2"
+  printf '%s' "$value" | tr ';' ',' | tr ',' '\n' | while IFS= read -r item; do
+    item=$(trim_value "$item")
+    [ -n "$item" ] || continue
+    parse_host_port "$item" "$default_port"
+    format_endpoint "$PARSED_HOST" "$PARSED_PORT"
+    printf '\n'
+  done
+}
+
+detect_public_endpoints() {
+  parse_host_port "$HEADBRIDGE_LISTEN" ""
+  listen_host="$PARSED_HOST"
+  listen_port="$PARSED_PORT"
+
+  if [ -n "${HEADBRIDGE_PUBLIC_ENDPOINT:-}" ]; then
+    normalize_public_endpoints "$HEADBRIDGE_PUBLIC_ENDPOINT" "$listen_port"
+    return 0
+  fi
+
+  if ! is_wildcard_host "$listen_host"; then
+    format_endpoint "$listen_host" "$listen_port"
+    printf '\n'
+    return 0
+  fi
+
+  emitted="false"
+  if [ "$listen_host" = "::" ]; then
+    public_v4=$(detect_public_ipv4)
+    public_v6=$(detect_public_ipv6)
+    if [ -n "$public_v4" ]; then
+      format_endpoint "$public_v4" "$listen_port"
+      printf '\n'
+      emitted="true"
+    fi
+    if [ -n "$public_v6" ]; then
+      format_endpoint "$public_v6" "$listen_port"
+      printf '\n'
+      emitted="true"
+    fi
+    is_true "$emitted" && return 0
+  else
+    public_v4=$(detect_public_ipv4)
+    if [ -n "$public_v4" ]; then
+      format_endpoint "$public_v4" "$listen_port"
+      printf '\n'
+      return 0
+    fi
+  fi
+
+  format_endpoint "REPLACE_WITH_PUBLIC_HOST" "$listen_port"
+  printf '\n'
+}
+
+build_topflow_share_json() {
+  endpoints="$1"
+  if is_true "$HEADBRIDGE_SKIP_CERT_VERIFY"; then
+    insecure_tls="true"
+  else
+    insecure_tls="false"
+  fi
+
+  relay_listen=$(resolve_vvip_relay_listen "$HEADBRIDGE_LISTEN" "$HEADBRIDGE_VVIP_RELAY_LISTEN" || true)
+  if [ -n "$relay_listen" ]; then
+    parse_host_port "$relay_listen" ""
+    relay_port="$PARSED_PORT"
+    vvip_enabled="true"
+  else
+    relay_port=""
+    vvip_enabled="false"
+  fi
+
+  HEADBRIDGE_SHARE_ENDPOINTS="$endpoints" \
+  HEADBRIDGE_SHARE_NODE_NAME="$HEADBRIDGE_NODE_NAME" \
+  HEADBRIDGE_SHARE_GROUP_NAME="$HEADBRIDGE_GROUP_NAME" \
+  HEADBRIDGE_SHARE_SNI="$HEADBRIDGE_SNI" \
+  HEADBRIDGE_SHARE_PSK="$HEADBRIDGE_PSK" \
+  HEADBRIDGE_SHARE_ADMIN_TOKEN="$HEADBRIDGE_ADMIN_TOKEN" \
+  HEADBRIDGE_SHARE_INSECURE_TLS="$insecure_tls" \
+  HEADBRIDGE_SHARE_VVIP_ENABLED="$vvip_enabled" \
+  HEADBRIDGE_SHARE_VVIP_RELAY_PORT="$relay_port" \
+  python3 <<'PY'
+import json
+import os
+import uuid
+
+endpoints = [line.strip() for line in os.environ["HEADBRIDGE_SHARE_ENDPOINTS"].splitlines() if line.strip()]
+node_name = os.environ["HEADBRIDGE_SHARE_NODE_NAME"]
+group_name = os.environ["HEADBRIDGE_SHARE_GROUP_NAME"]
+sni = os.environ["HEADBRIDGE_SHARE_SNI"]
+psk = os.environ["HEADBRIDGE_SHARE_PSK"]
+admin_token = os.environ.get("HEADBRIDGE_SHARE_ADMIN_TOKEN", "").strip()
+insecure_tls = os.environ["HEADBRIDGE_SHARE_INSECURE_TLS"].lower() == "true"
+vvip_enabled = os.environ["HEADBRIDGE_SHARE_VVIP_ENABLED"].lower() == "true"
+vvip_relay_port = os.environ.get("HEADBRIDGE_SHARE_VVIP_RELAY_PORT", "").strip()
+
+def parse_endpoint(endpoint):
+    if endpoint.startswith("["):
+        end = endpoint.find("]")
+        if end <= 0:
+            raise ValueError(f"invalid IPv6 endpoint: {endpoint}")
+        host = endpoint[1:end]
+        rest = endpoint[end + 1:]
+        port = int(rest[1:]) if rest.startswith(":") else 0
+        return host, port
+    host, sep, port_text = endpoint.rpartition(":")
+    if not sep:
+        raise ValueError(f"endpoint missing port: {endpoint}")
+    return host, int(port_text)
+
+def endpoint_family(host):
+    if ":" in host:
+        return "IPv6"
+    parts = host.split(".")
+    if len(parts) == 4 and all(part.isdigit() and 0 <= int(part) <= 255 for part in parts):
+        return "IPv4"
+    return "Domain"
+
+nodes = []
+for endpoint in endpoints:
+    host, port = parse_endpoint(endpoint)
+    family = endpoint_family(host)
+    display_name = node_name if len(endpoints) == 1 else f"{node_name} {family}"
+    node = {
+        "id": str(uuid.uuid4()),
+        "name": display_name,
+        "host": host,
+        "group": group_name,
+        "port": port,
+        "sni": sni,
+        "insecureTls": insecure_tls,
+        "pskB64": psk,
+        "kernelType": "HeadBridge"
+    }
+    if admin_token:
+        node["adminToken"] = admin_token
+    if vvip_enabled:
+        node["vvipEnabled"] = True
+        if vvip_relay_port:
+            node["vvipRelayPort"] = int(vvip_relay_port)
+    nodes.append(node)
+
+share = {
+    "app": "TopFlow",
+    "format": "topflow-share",
+    "formatVersion": 1,
+    "activeIndex": 0,
+    "nodes": nodes
+}
+
+print(json.dumps(share, ensure_ascii=False, separators=(",", ":")))
+PY
+}
+
+build_topflow_link() {
+  endpoints="$1"
+  share_json=$(build_topflow_share_json "$endpoints")
+  HEADBRIDGE_SHARE_JSON="$share_json" python3 <<'PY'
+import base64
+import os
+import zlib
+
+data = os.environ["HEADBRIDGE_SHARE_JSON"].encode("utf-8")
+compressed = zlib.compress(data, 9)
+raw_deflate = compressed[2:-4]
+encoded = base64.urlsafe_b64encode(raw_deflate).decode("ascii").rstrip("=")
+print(f"topflow://import?zip=deflate&data={encoded}")
+PY
+}
+
+format_client_config_list() {
+  endpoints="$1"
+  relay="${2:-off}"
+  vvip_enabled="false"
+  [ -n "$relay" ] && [ "$relay" != "off" ] && vvip_enabled="true"
+  count=$(printf '%s\n' "$endpoints" | sed '/^$/d' | wc -l | tr -d ' ')
+  index=1
+  printf '%s\n' "$endpoints" | while IFS= read -r endpoint; do
+    endpoint=$(trim_value "$endpoint")
+    [ -n "$endpoint" ] || continue
+    parse_host_port "$endpoint" ""
+    if [ "$count" -gt 1 ]; then
+      label="node $index"
+    else
+      label="node"
+    fi
+    cat <<EOF
+  ${label}:
+    host        = $PARSED_HOST
+    port        = $PARSED_PORT
+    sni         = $HEADBRIDGE_SNI
+    insecureTls = $HEADBRIDGE_SKIP_CERT_VERIFY
+    vvipEnabled = $vvip_enabled
+    vvipRelay   = $relay
+    pskB64      = $HEADBRIDGE_PSK
+    adminToken  = $HEADBRIDGE_ADMIN_TOKEN
+    kernelType  = HeadBridge
+EOF
+    index=$((index + 1))
+  done
+}
+
 write_env_file() {
   mkdir -p "$ETC_DIR"
   umask 027
   cat > "$ENV_FILE" <<EOF
 HEADBRIDGE_LISTEN='$(escape_single_quotes "$HEADBRIDGE_LISTEN")'
+HEADBRIDGE_PUBLIC_ENDPOINT='$(escape_single_quotes "$HEADBRIDGE_PUBLIC_ENDPOINT")'
+HEADBRIDGE_NODE_NAME='$(escape_single_quotes "$HEADBRIDGE_NODE_NAME")'
+HEADBRIDGE_GROUP_NAME='$(escape_single_quotes "$HEADBRIDGE_GROUP_NAME")'
+HEADBRIDGE_SNI='$(escape_single_quotes "$HEADBRIDGE_SNI")'
 HEADBRIDGE_PSK='$(escape_single_quotes "$HEADBRIDGE_PSK")'
 HEADBRIDGE_MAX_CONNECTIONS='$(escape_single_quotes "$HEADBRIDGE_MAX_CONNECTIONS")'
 HEADBRIDGE_MAX_CONNECTIONS_PER_IP='$(escape_single_quotes "$HEADBRIDGE_MAX_CONNECTIONS_PER_IP")'
@@ -606,19 +938,45 @@ remove_runtime_user() {
   fi
 }
 
-print_install_summary() {
-  relay_value=$(resolve_vvip_relay_listen "$HEADBRIDGE_LISTEN" "$HEADBRIDGE_VVIP_RELAY_LISTEN" || true)
-  log "service name: $SERVICE_NAME"
-  log "binary path: $BIN_PATH"
-  log "env file: $ENV_FILE"
-  log "listen: $HEADBRIDGE_LISTEN"
-  if [ -n "$relay_value" ]; then
-    log "vvip relay listen: $relay_value"
+print_connection_summary() {
+  endpoints=$(detect_public_endpoints)
+  endpoint_lines=$(printf '%s\n' "$endpoints" | sed '/^$/d; s/^/  /')
+  relay_display=$(resolve_vvip_relay_listen "$HEADBRIDGE_LISTEN" "$HEADBRIDGE_VVIP_RELAY_LISTEN" || true)
+  [ -n "$relay_display" ] || relay_display="off"
+  config_lines=$(format_client_config_list "$endpoints" "$relay_display")
+  link=$(build_topflow_link "$endpoints")
+
+  cat <<EOF
+
+HeadBridge Alpine deployment completed.
+
+service name:    $SERVICE_NAME
+listen:          $HEADBRIDGE_LISTEN
+client address:
+$endpoint_lines
+node name:       $HEADBRIDGE_NODE_NAME
+group name:      $HEADBRIDGE_GROUP_NAME
+sni:             $HEADBRIDGE_SNI
+psk:             $HEADBRIDGE_PSK
+admin token:     $HEADBRIDGE_ADMIN_TOKEN
+binary path:     $BIN_PATH
+env file:        $ENV_FILE
+
+client config:
+$config_lines
+
+share link:
+$link
+
+common commands:
+  rc-service $SERVICE_NAME status
+  rc-service $SERVICE_NAME restart
+  cat $ENV_FILE
+EOF
+
+  if printf '%s\n' "$endpoints" | grep -q 'REPLACE_WITH_PUBLIC_HOST'; then
+    warn "public endpoint detection failed; reinstall with --public-endpoint your.domain.com:6379 or manually replace the host in the share link"
   fi
-  log "psk: $HEADBRIDGE_PSK"
-  log "admin token: $HEADBRIDGE_ADMIN_TOKEN"
-  log "client host port: 6379 by default; fill this admin token in TopFlow if adding the node manually"
-  log "config file keeps secrets at: $ENV_FILE"
 }
 
 main_install() {
@@ -634,7 +992,7 @@ main_install() {
   write_runner_script
   write_openrc_service
   enable_and_start_service
-  print_install_summary
+  print_connection_summary
 }
 
 main_update() {
@@ -647,6 +1005,7 @@ main_update() {
   write_env_file
   write_runner_script
   update_service
+  print_connection_summary
 }
 
 main_uninstall() {
