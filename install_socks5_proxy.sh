@@ -82,9 +82,9 @@ Usage:
   sh $SCRIPT_NAME restart
 
 Install options:
-  --port <1-65535>           SOCKS5 port, default: 1080
-  --username <name>          username; auto-generated when omitted
-  --password <pass>          password; auto-generated when omitted
+  --port <1-65535>           SOCKS5 port, prompted by default; default: 1080
+  --username <name>          username, prompted by default
+  --password <pass>          password, prompted by default
   --public-ipv4 <ip>         override detected public IPv4
   --public-ipv6 <ip>         override detected public IPv6
   --service-name <name>      default: $SERVICE_NAME_DEFAULT
@@ -97,7 +97,7 @@ Install options:
   --ipv6-only                listen on IPv6 only
   --no-firewall              do not modify UFW or firewalld
   --no-auto-creds            require explicit username/password
-  --yes                      non-interactive install/uninstall
+  --yes                      non-interactive install/uninstall; omitted credentials are auto-generated
   -h, --help                 show this help
 
 Examples:
@@ -165,6 +165,76 @@ is_integer() {
 validate_port() {
   is_integer "$SOCKS5_PORT" || die "port must be a number"
   [ "$SOCKS5_PORT" -ge 1 ] && [ "$SOCKS5_PORT" -le 65535 ] || die "port must be between 1 and 65535"
+}
+
+prompt_input() {
+  prompt_label="$1"
+  default_value="$2"
+  secret="${3:-false}"
+
+  if is_true "$secret" && [ -n "$default_value" ]; then
+    printf '%s [set, press Enter to keep]: ' "$prompt_label" > /dev/tty
+  elif [ -n "$default_value" ]; then
+    printf '%s [%s]: ' "$prompt_label" "$default_value" > /dev/tty
+  else
+    printf '%s: ' "$prompt_label" > /dev/tty
+  fi
+
+  if is_true "$secret"; then
+    old_tty_settings=$(stty -g < /dev/tty 2>/dev/null || true)
+    stty -echo < /dev/tty 2>/dev/null || true
+    IFS= read -r input_value < /dev/tty || input_value=""
+    [ -n "$old_tty_settings" ] && stty "$old_tty_settings" < /dev/tty 2>/dev/null || true
+    printf '\n' > /dev/tty
+  else
+    IFS= read -r input_value < /dev/tty || input_value=""
+  fi
+
+  if [ -z "$input_value" ]; then
+    input_value="$default_value"
+  fi
+  printf '%s' "$input_value"
+}
+
+prompt_required() {
+  prompt_label="$1"
+  default_value="$2"
+  secret="${3:-false}"
+
+  while :; do
+    input_value=$(prompt_input "$prompt_label" "$default_value" "$secret")
+    if [ -n "$input_value" ]; then
+      printf '%s' "$input_value"
+      return 0
+    fi
+    warn "$prompt_label is required"
+  done
+}
+
+prompt_port() {
+  while :; do
+    input_value=$(prompt_required "SOCKS5 port" "$SOCKS5_PORT" false)
+    if is_integer "$input_value" && [ "$input_value" -ge 1 ] && [ "$input_value" -le 65535 ]; then
+      printf '%s' "$input_value"
+      return 0
+    fi
+    warn "port must be a number between 1 and 65535"
+  done
+}
+
+prompt_install_options() {
+  is_true "$ASSUME_YES" && return 0
+
+  if [ ! -r /dev/tty ]; then
+    warn "interactive input is unavailable; falling back to command line options and environment variables"
+    return 0
+  fi
+
+  log "interactive setup"
+  SOCKS5_PORT=$(prompt_port)
+  SOCKS5_USERNAME=$(prompt_required "SOCKS5 username" "$SOCKS5_USERNAME" false)
+  SOCKS5_PASSWORD=$(prompt_required "SOCKS5 password" "$SOCKS5_PASSWORD" false)
+  AUTO_GENERATE_CREDS="false"
 }
 
 random_hex() {
@@ -1034,6 +1104,7 @@ uninstall_service() {
 install_service() {
   require_root
   detect_os
+  prompt_install_options
   install_packages
   resolve_python
   validate_port
